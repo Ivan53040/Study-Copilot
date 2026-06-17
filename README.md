@@ -14,8 +14,8 @@ Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
 | 0 | Setup: config, SQLite, FastAPI, logging, path-security | ✅ Done |
 | 1 | Ingestion: scan → parse → classify → chunk → index | ✅ Done |
 | 2 | Search: FTS5 + embeddings + hybrid retrieval | ✅ Done |
-| 3 | Grounded chat (LM Studio) with citations | ⏳ Next |
-| 4 | Obsidian note generation | ⏳ |
+| 3 | Grounded chat (LM Studio) with citations | ✅ Done |
+| 4 | Obsidian note generation | ⏳ Next |
 | 5 | Learning history (quizzes, confidence) | ⏳ |
 | 6 | Planning (weak topics, daily plans) | ⏳ |
 | 7 | Past papers / mock exams | ⏳ |
@@ -108,8 +108,24 @@ Endpoints live so far:
 - `GET  /courses/{course}/documents` — list indexed documents
 - `POST /search` — hybrid (keyword + vector) search with citations; filter by
   `course`/`week`/`source_type`/`max_trust_level`
+- `POST /chat` — grounded Q&A; `{message, course?, conversation_id?}` → answer
+  with `[S#]` citations, validated source list, and warnings
+- `GET  /conversations/{id}` — replay a conversation
 - `GET  /sync/status` — background sync state
 - `POST /sync/run` — trigger a sync (`?dry_run=true` to preview)
+
+### Grounded chat (Phase 3)
+
+`POST /chat` retrieves with hybrid search, builds a numbered source context,
+and asks the local model (LM Studio) to answer **only** from those sources with
+`[S#]` citations. The answer's citations are then **validated** against the
+sources actually provided — hallucinated markers and uncited claims are flagged
+in `warnings`. If the model is unavailable, the endpoint still returns the
+retrieved sources with a note. Conversations persist (`conversations`/`messages`
+tables) so follow-up questions keep context.
+
+> Needs a chat model loaded in LM Studio. The model never sees anything beyond
+> the retrieved chunks, so answers stay grounded in your own materials.
 
 ### Retrieval design (Phase 2)
 
@@ -147,10 +163,11 @@ app/
   security/     path permission enforcement (read/write/denied)
   database/     SQLAlchemy models (Document, Chunk) + session
   ingestion/    scanner, markdown/pdf parsers, classifier, chunker, service
-  models/       embedding providers (LM Studio / offline hash)
+  models/       embedding + chat adapters (LM Studio / offline fallbacks)
   retrieval/    keyword (FTS5), vector, hybrid fusion, citations, service
+  agent/        context builder, prompts, citation validation, study agent
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
-  api/          FastAPI routers (health, ingest, courses, search, sync)
+  api/          FastAPI routers (health, ingest, courses, search, chat, sync)
 scripts/        CLI entrypoints (ingest, embed, sync)
 tests/          pytest suite
 ```

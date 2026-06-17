@@ -1,5 +1,14 @@
-"""Model adapters: embeddings now; chat/LLM in Phase 3."""
+"""Model adapters: embeddings and chat."""
 
+from app.models.chat import (
+    ChatAdapter,
+    ChatError,
+    ChatMessage,
+    ChatResponse,
+    EchoChatAdapter,
+    LMStudioChatAdapter,
+    get_chat_adapter,
+)
 from app.models.embeddings import (
     EmbeddingProvider,
     HashingEmbeddings,
@@ -8,6 +17,13 @@ from app.models.embeddings import (
 )
 
 __all__ = [
+    "ChatAdapter",
+    "ChatError",
+    "ChatMessage",
+    "ChatResponse",
+    "EchoChatAdapter",
+    "LMStudioChatAdapter",
+    "get_chat_adapter",
     "EmbeddingProvider",
     "HashingEmbeddings",
     "OpenAICompatibleEmbeddings",

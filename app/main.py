@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import __version__
-from app.api import courses, health, ingest, search, sync
+from app.api import chat, courses, health, ingest, search, sync
 from app.config.settings import get_settings
 from app.database.db import init_db
 from app.logging_config import get_logger
@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(ingest.router)
     app.include_router(courses.router)
     app.include_router(search.router)
+    app.include_router(chat.router)
     app.include_router(sync.router)
     return app
 
