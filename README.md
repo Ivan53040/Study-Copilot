@@ -13,8 +13,8 @@ Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
 |-------|-------------|-------|
 | 0 | Setup: config, SQLite, FastAPI, logging, path-security | ✅ Done |
 | 1 | Ingestion: scan → parse → classify → chunk → index | ✅ Done |
-| 2 | Search: FTS5 + embeddings + hybrid retrieval | ⏳ Next |
-| 3 | Grounded chat (LM Studio) with citations | ⏳ |
+| 2 | Search: FTS5 + embeddings + hybrid retrieval | ✅ Done |
+| 3 | Grounded chat (LM Studio) with citations | ⏳ Next |
 | 4 | Obsidian note generation | ⏳ |
 | 5 | Learning history (quizzes, confidence) | ⏳ |
 | 6 | Planning (weak topics, daily plans) | ⏳ |
@@ -90,6 +90,15 @@ Run the API:
 python -m app.main          # http://127.0.0.1:8000  (docs at /docs)
 ```
 
+Index embeddings for vector search (needs an embedding model loaded in LM
+Studio, e.g. `nomic-embed-text`; otherwise set `embeddings.provider: hash` in
+config for an offline fallback):
+
+```bash
+python -m scripts.embed            # embed chunks missing an embedding
+python -m scripts.embed --reindex  # re-embed everything
+```
+
 Endpoints live so far:
 
 - `GET  /health` — config + vault sanity check
@@ -97,8 +106,20 @@ Endpoints live so far:
 - `POST /ingest/file` — ingest a single readable file
 - `GET  /courses` — document/chunk counts per course
 - `GET  /courses/{course}/documents` — list indexed documents
+- `POST /search` — hybrid (keyword + vector) search with citations; filter by
+  `course`/`week`/`source_type`/`max_trust_level`
 - `GET  /sync/status` — background sync state
 - `POST /sync/run` — trigger a sync (`?dry_run=true` to preview)
+
+### Retrieval design (Phase 2)
+
+- **Keyword:** SQLite FTS5 (BM25), kept in sync with `chunks` via triggers.
+- **Vector:** embeddings stored as float32 blobs; brute-force cosine in numpy
+  (swap for Chroma/Qdrant later behind the same interface).
+- **Hybrid:** Reciprocal Rank Fusion of keyword + vector, then a trust-level
+  bonus so official material outranks unreviewed notes on ties.
+- **Graceful:** if the embedding endpoint is down, search returns keyword-only
+  results with a note instead of failing.
 
 ## Tests
 
@@ -126,8 +147,10 @@ app/
   security/     path permission enforcement (read/write/denied)
   database/     SQLAlchemy models (Document, Chunk) + session
   ingestion/    scanner, markdown/pdf parsers, classifier, chunker, service
+  models/       embedding providers (LM Studio / offline hash)
+  retrieval/    keyword (FTS5), vector, hybrid fusion, citations, service
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
-  api/          FastAPI routers (health, ingest, courses, sync)
-scripts/        CLI entrypoints (ingest, sync)
+  api/          FastAPI routers (health, ingest, courses, search, sync)
+scripts/        CLI entrypoints (ingest, embed, sync)
 tests/          pytest suite
 ```

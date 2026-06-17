@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -93,3 +94,23 @@ class Chunk(Base):
     extra: Mapped[dict] = mapped_column(JSON, default=dict)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
+    embedding: Mapped["ChunkEmbedding | None"] = relationship(
+        back_populates="chunk",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+
+
+class ChunkEmbedding(Base):
+    __tablename__ = "chunk_embeddings"
+
+    chunk_id: Mapped[int] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(String, index=True)
+    dim: Mapped[int] = mapped_column(Integer)
+    # float32 vector stored as raw bytes (np.frombuffer to read back).
+    vector: Mapped[bytes] = mapped_column(LargeBinary)
+
+    chunk: Mapped["Chunk"] = relationship(back_populates="embedding")

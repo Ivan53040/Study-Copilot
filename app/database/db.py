@@ -6,12 +6,55 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config.settings import Settings, get_settings
 from app.database.models import Base
+
+# FTS5 full-text index over chunks, kept in sync via triggers. Uses an
+# external-content table so the text lives once in `chunks`.
+_FTS_SQL = [
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+        content, heading,
+        content='chunks', content_rowid='id',
+        tokenize='porter unicode61'
+    );
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, content, heading)
+        VALUES (new.id, new.content, coalesce(new.heading, ''));
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content, heading)
+        VALUES ('delete', old.id, old.content, coalesce(old.heading, ''));
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content, heading)
+        VALUES ('delete', old.id, old.content, coalesce(old.heading, ''));
+        INSERT INTO chunks_fts(rowid, content, heading)
+        VALUES (new.id, new.content, coalesce(new.heading, ''));
+    END;
+    """,
+]
+
+
+def _ensure_fts(engine: Engine) -> None:
+    """Create the FTS5 table/triggers and (re)sync from chunks."""
+    if not engine.url.get_backend_name().startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        for stmt in _FTS_SQL:
+            conn.execute(text(stmt))
+        # Rebuild from the content table so pre-existing chunks get indexed.
+        conn.execute(text("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')"))
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
@@ -56,6 +99,7 @@ def get_engine(settings: Settings | None = None) -> Engine:
 def init_db(settings: Settings | None = None) -> None:
     engine = get_engine(settings)
     Base.metadata.create_all(engine)
+    _ensure_fts(engine)
 
 
 def get_session(settings: Settings | None = None) -> Session:

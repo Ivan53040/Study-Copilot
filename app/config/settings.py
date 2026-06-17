@@ -52,10 +52,23 @@ class ModelsConfig(BaseModel):
     cloud_fallback: CloudFallbackConfig = Field(default_factory=CloudFallbackConfig)
 
 
+class EmbeddingsConfig(BaseModel):
+    # "lmstudio" (OpenAI-compatible /embeddings) or "hash" (offline fallback).
+    provider: str = "lmstudio"
+    model: str = "text-embedding-nomic-embed-text-v1.5"
+    base_url: str | None = None  # defaults to models.lmstudio.base_url
+    batch_size: int = 32
+    # Dimension for the offline "hash" provider.
+    hash_dim: int = 256
+
+
 class RetrievalConfig(BaseModel):
     keyword_limit: int = 20
     vector_limit: int = 20
     final_context_limit: int = 8
+    # Reciprocal-rank-fusion constant and trust weighting for hybrid search.
+    rrf_k: int = 60
+    trust_weight: float = 0.15
 
 
 class GenerationConfig(BaseModel):
@@ -91,6 +104,7 @@ class Settings(BaseModel):
     vault: VaultConfig
     external_sources: list[ExternalSource] = Field(default_factory=list)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
+    embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
