@@ -16,8 +16,8 @@ Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
 | 2 | Search: FTS5 + embeddings + hybrid retrieval | ✅ Done |
 | 3 | Grounded chat (LM Studio) with citations | ✅ Done |
 | 4 | Obsidian note generation | ✅ Done |
-| 5 | Learning history (quizzes, confidence) | ⏳ Next |
-| 6 | Planning (weak topics, daily plans) | ⏳ |
+| 5 | Learning history (quizzes, confidence) | ✅ Done |
+| 6 | Planning (weak topics, daily plans) | ⏳ Next |
 | 7 | Past papers / mock exams | ⏳ |
 | 8 | Evaluation | ⏳ |
 
@@ -92,8 +92,9 @@ python -m app.main          # http://127.0.0.1:8000  (docs at /docs)
 
 ### Frontend (React + Vite)
 
-A single-page app in [`frontend/`](frontend/) with Chat, Search, Generate-Notes
-and Library views. It calls the API through a dev proxy (`/api` → `:8000`).
+A single-page app in [`frontend/`](frontend/) with Chat, Search, Generate-Notes,
+Quiz, Progress and Library views. It calls the API through a dev proxy
+(`/api` → `:8000`).
 
 ```bash
 cd frontend
@@ -127,8 +128,22 @@ Endpoints live so far:
 - `GET  /conversations/{id}` — replay a conversation
 - `POST /notes/generate` — generate a revision note; `{course, week?, topic?,
   write?}` → preview by default, `write:true` saves into `StudyCopilot/`
+- `POST /quizzes/generate` — generate a quiz (MCQ + short) from sources
+- `POST /quizzes/{id}/submit` — mark answers, record events, update confidence
+- `GET  /progress/{course}` — concept-level confidence, status, next review
 - `GET  /sync/status` — background sync state
 - `POST /sync/run` — trigger a sync (`?dry_run=true` to preview)
+
+### Learning history (Phase 5)
+
+Quizzes are generated from retrieved sources (MCQ + short answer) with answer
+keys kept **server-side**. On submit, MCQs are marked deterministically and
+short answers by the model (with an offline heuristic fallback). Each result
+becomes a `LearningEvent`, and per-concept **confidence** is recomputed with a
+transparent formula (recent + long-term accuracy + review recency + difficulty —
+plan §17), driving a status band (weak/developing/good/strong) and a
+spaced-repetition `next_review` date (plan §18). `GET /progress/{course}` exposes
+it; the frontend Progress page visualises it.
 
 ### Note generation (Phase 4)
 
@@ -194,7 +209,8 @@ app/
   models/       embedding + chat adapters (LM Studio / offline fallbacks)
   retrieval/    keyword (FTS5), vector, hybrid fusion, citations, service
   agent/        context builder, prompts, citation validation, study agent
-  generation/   revision-note generation (quizzes/exams later)
+  generation/   revision notes, quiz generation + marking
+  learning/     concepts, confidence, spaced repetition, learning events
   obsidian/     templates, links, path-safe note writer
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
   api/          routers (health, ingest, courses, search, chat, notes, sync)

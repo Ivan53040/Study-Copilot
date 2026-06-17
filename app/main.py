@@ -8,7 +8,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import chat, courses, health, ingest, notes, search, sync
+from app.api import (
+    chat,
+    courses,
+    health,
+    ingest,
+    notes,
+    quizzes,
+    search,
+    sync,
+)
 from app.config.settings import get_settings
 from app.database.db import init_db
 from app.logging_config import get_logger
@@ -55,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(chat.router)
     app.include_router(notes.router)
+    app.include_router(quizzes.router)
     app.include_router(sync.router)
     return app
 

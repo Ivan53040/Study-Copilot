@@ -71,6 +71,57 @@ export interface DocumentRow {
   path: string;
 }
 
+export interface QuizQuestion {
+  id: number;
+  index: number;
+  type: "mcq" | "short";
+  question: string;
+  options: string[] | null;
+  difficulty: string;
+  concept: string | null;
+}
+
+export interface QuizResult {
+  quiz_id: number | null;
+  course: string | null;
+  week: number | null;
+  topic: string | null;
+  questions: QuizQuestion[];
+  warnings: string[];
+}
+
+export interface GradedResult {
+  question_id: number;
+  concept: string | null;
+  your_answer: string;
+  correct_answer: string;
+  outcome: "correct" | "partial" | "incorrect";
+  score: number;
+  explanation: string | null;
+  feedback: string | null;
+}
+
+export interface SubmitResult {
+  quiz_id: number;
+  score: number;
+  total: number;
+  results: GradedResult[];
+  progress: Record<string, { confidence: number; status: string; next_review: string | null }>;
+}
+
+export interface ConceptProgress {
+  concept_id: number;
+  name: string;
+  course: string | null;
+  confidence: number;
+  status: string;
+  correct: number;
+  incorrect: number;
+  partial: number;
+  last_reviewed: string | null;
+  next_review: string | null;
+}
+
 export interface Health {
   status: string;
   version: string;

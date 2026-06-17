@@ -1,10 +1,13 @@
 import type {
   ChatResponse,
+  ConceptProgress,
   CourseSummary,
   DocumentRow,
   Health,
   NotePreview,
+  QuizResult,
   SearchResponse,
+  SubmitResult,
 } from "./types";
 
 // Calls go through the Vite proxy (/api -> backend). Override with VITE_API_BASE.
@@ -72,4 +75,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  generateQuiz: (body: {
+    course?: string | null;
+    week?: number | null;
+    topic?: string | null;
+    num_questions?: number;
+  }) =>
+    request<QuizResult>("/quizzes/generate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  submitQuiz: (quizId: number, answers: { question_id: number; answer: string }[]) =>
+    request<SubmitResult>(`/quizzes/${quizId}/submit`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    }),
+
+  progress: (course: string) =>
+    request<{ course: string; concepts: ConceptProgress[] }>(
+      `/progress/${encodeURIComponent(course)}`,
+    ),
 };

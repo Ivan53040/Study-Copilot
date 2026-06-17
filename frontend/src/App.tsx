@@ -5,13 +5,17 @@ import { ChatPage } from "./pages/Chat";
 import { SearchPage } from "./pages/Search";
 import { NotesPage } from "./pages/Notes";
 import { LibraryPage } from "./pages/Library";
+import { QuizPage } from "./pages/Quiz";
+import { ProgressPage } from "./pages/Progress";
 
-type Tab = "chat" | "search" | "notes" | "library";
+type Tab = "chat" | "search" | "notes" | "quiz" | "progress" | "library";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "chat", label: "💬  Chat" },
   { id: "search", label: "🔍  Search" },
   { id: "notes", label: "📝  Generate Notes" },
+  { id: "quiz", label: "🧠  Quiz" },
+  { id: "progress", label: "📈  Progress" },
   { id: "library", label: "📚  Library" },
 ];
 
@@ -74,6 +78,8 @@ export function App() {
         {tab === "chat" && <ChatPage />}
         {tab === "search" && <SearchPage />}
         {tab === "notes" && <NotesPage />}
+        {tab === "quiz" && <QuizPage />}
+        {tab === "progress" && <ProgressPage />}
         {tab === "library" && <LibraryPage />}
       </main>
     </div>
