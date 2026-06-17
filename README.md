@@ -90,6 +90,20 @@ Run the API:
 python -m app.main          # http://127.0.0.1:8000  (docs at /docs)
 ```
 
+### Frontend (React + Vite)
+
+A single-page app in [`frontend/`](frontend/) with Chat, Search, Generate-Notes
+and Library views. It calls the API through a dev proxy (`/api` → `:8000`).
+
+```bash
+cd frontend
+npm install      # first time only
+npm run dev      # http://localhost:5173
+```
+
+Run the backend (`python -m app.main`) and the frontend together; open
+http://localhost:5173. The sidebar shows a live "Backend online" indicator.
+
 Index embeddings for vector search (needs an embedding model loaded in LM
 Studio, e.g. `nomic-embed-text`; otherwise set `embeddings.provider: hash` in
 config for an offline fallback):

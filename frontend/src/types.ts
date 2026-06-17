@@ -1,0 +1,82 @@
+export interface Citation {
+  title: string;
+  course: string | null;
+  week: number | null;
+  location: string | null;
+  link: string;
+  path: string;
+  source_type: string | null;
+  trust_level: number;
+}
+
+export interface SearchHit {
+  chunk_id: number;
+  document_id: number;
+  heading: string | null;
+  page_number: number | null;
+  course: string | null;
+  week: number | null;
+  source_type: string | null;
+  trust_level: number;
+  title: string;
+  path: string;
+  score: number;
+  retrieval: string;
+  content?: string;
+  citation: Citation;
+}
+
+export interface SearchResponse {
+  query: string;
+  used_vector: boolean;
+  note: string | null;
+  count: number;
+  results: SearchHit[];
+}
+
+export interface ChatResponse {
+  conversation_id: number;
+  answer: string;
+  citations: Citation[];
+  sources: Array<Record<string, unknown> & { title: string; marker: string }>;
+  warnings: string[];
+  used_vector: boolean;
+  model: string;
+}
+
+export interface NotePreview {
+  title: string;
+  target_path: string;
+  content: string;
+  sources: Array<Record<string, unknown> & { title: string; marker: string }>;
+  warnings: string[];
+  written: boolean;
+  model: string;
+}
+
+export interface CourseSummary {
+  course: string;
+  documents: number;
+  chunks: number;
+}
+
+export interface DocumentRow {
+  id: number;
+  title: string;
+  week: number | null;
+  document_type: string | null;
+  source_type: string | null;
+  trust_level: number;
+  chunks: number;
+  path: string;
+}
+
+export interface Health {
+  status: string;
+  version: string;
+  vault_root: string;
+  vault_exists: boolean;
+  output_root: string;
+  default_provider: string;
+  external_sources: number;
+}

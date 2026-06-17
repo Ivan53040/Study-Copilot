@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api import chat, courses, health, ingest, notes, search, sync
@@ -40,6 +41,13 @@ def create_app() -> FastAPI:
         version=__version__,
         description="Local-first AI study assistant over an Obsidian vault.",
         lifespan=lifespan,
+    )
+    # Local-first app: allow the Vite dev server (and any localhost) to call us.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     app.include_router(health.router)
     app.include_router(ingest.router)
