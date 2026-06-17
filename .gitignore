@@ -13,6 +13,9 @@ data/
 *.db
 *.sqlite3
 
+# Generated eval output (report.md is committed as a snapshot)
+evals/report.json
+
 # OS
 .DS_Store
 Thumbs.db

@@ -19,7 +19,7 @@ Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
 | 5 | Learning history (quizzes, confidence) | ✅ Done |
 | 6 | Planning (weak topics, daily plans) | ✅ Done |
 | 7 | Past papers / mock exams | ✅ Done |
-| 8 | Evaluation | ⏳ Next |
+| 8 | Evaluation | ✅ Done |
 
 ## Setup
 
@@ -208,6 +208,26 @@ tables) so follow-up questions keep context.
 python -m pytest
 ```
 
+## Evaluation
+
+A regression harness ([`evals/`](evals/)) measures retrieval quality, the safety
+guarantees, and marking consistency, and writes [`evals/report.md`](evals/report.md):
+
+```bash
+python -m scripts.evaluate          # writes evals/report.md
+```
+
+- **Retrieval** — keyword-presence recall@k + MRR over a seed dataset
+  ([`evals/retrieval_dataset.json`](evals/retrieval_dataset.json)).
+- **Safety** — programmatic checks that writes stay inside `StudyCopilot/`,
+  path traversal is blocked, and `.env`/`.obsidian` are unreadable.
+- **Marking** — same input grades identically (determinism guard).
+
+Latest run on the REIT6811 vault (keyword-only, LM Studio off): recall@5 ≈ 0.92,
+MRR ≈ 0.82, safety 5/5, marking 2/2. The one retrieval miss (a common-word
+"reliability vs validity" query) is the kind of gap semantic vector search
+recovers — load an embedding model and re-run to compare.
+
 ## Safety model
 
 - **Reads** are confined to the vault's `read_paths` + configured
@@ -238,6 +258,7 @@ app/
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
   api/          routers (health, ingest, courses, search, chat, notes,
                 quizzes, plans, exams, sync)
-scripts/        CLI entrypoints (ingest, embed, sync)
+scripts/        CLI entrypoints (ingest, embed, sync, evaluate)
+evals/          evaluation harness + seed dataset + report
 tests/          pytest suite
 ```
