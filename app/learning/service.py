@@ -106,6 +106,8 @@ def get_progress(session: Session, course: str | None = None) -> list[dict]:
                 "concept_id": c.id,
                 "name": c.name,
                 "course": c.course,
+                "exam_frequency": c.exam_frequency,
+                "importance": c.importance,
                 "confidence": round(p.confidence, 3) if p else 0.0,
                 "status": p.status if p else "weak",
                 "correct": p.correct_count if p else 0,

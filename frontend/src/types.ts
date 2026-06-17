@@ -122,6 +122,47 @@ export interface ConceptProgress {
   next_review: string | null;
 }
 
+export interface PlanBlock {
+  concept: string;
+  concept_id: number;
+  minutes: number;
+  action: string;
+  confidence: number;
+  status: string;
+  exam_frequency: number;
+}
+
+export interface DailyPlan {
+  title: string;
+  target_path: string;
+  content: string;
+  written: boolean;
+  data: {
+    course: string | null;
+    date: string;
+    available_minutes: number;
+    exam_date: string | null;
+    days_until_exam: number | null;
+    blocks: PlanBlock[];
+  };
+}
+
+export interface PastPaperQuestion {
+  id: number;
+  number: string | null;
+  marks: number | null;
+  concept: string | null;
+  text: string;
+}
+
+export interface AnalyzeReport {
+  course: string | null;
+  documents: number;
+  questions: number;
+  concepts_updated: number;
+  warnings: string[];
+}
+
 export interface Health {
   status: string;
   version: string;

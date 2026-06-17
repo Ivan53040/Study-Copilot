@@ -14,6 +14,7 @@ export function QuizPage() {
   const [week, setWeek] = useState("");
   const [topic, setTopic] = useState("");
   const [num, setNum] = useState("5");
+  const [examMode, setExamMode] = useState(false);
   const [quiz, setQuiz] = useState<QuizResult | null>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [result, setResult] = useState<SubmitResult | null>(null);
@@ -28,12 +29,15 @@ export function QuizPage() {
     setQuiz(null);
     setLoading(true);
     try {
-      const r = await api.generateQuiz({
+      const body = {
         course: course || null,
         week: week ? Number(week) : null,
         topic: topic || null,
         num_questions: Number(num) || 5,
-      });
+      };
+      const r = examMode
+        ? await api.generateExam(body)
+        : await api.generateQuiz(body);
       setQuiz(r);
     } catch (e) {
       setError((e as Error).message);
@@ -90,9 +94,15 @@ export function QuizPage() {
           </div>
         </div>
         <div className="spacer" />
-        <button className="primary" onClick={generate} disabled={loading}>
-          {loading ? "Generating…" : "Generate quiz"}
-        </button>
+        <div className="row">
+          <button className="primary" onClick={generate} disabled={loading}>
+            {loading ? "Generating…" : examMode ? "Generate mock exam" : "Generate quiz"}
+          </button>
+          <label className="small muted" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input type="checkbox" checked={examMode} onChange={(e) => setExamMode(e.target.checked)} />
+            Exam mode (long-answer, past-paper style)
+          </label>
+        </div>
       </div>
 
       {error && <div className="warn-banner" style={{ marginTop: 12 }}>{error}</div>}

@@ -17,9 +17,9 @@ Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
 | 3 | Grounded chat (LM Studio) with citations | ✅ Done |
 | 4 | Obsidian note generation | ✅ Done |
 | 5 | Learning history (quizzes, confidence) | ✅ Done |
-| 6 | Planning (weak topics, daily plans) | ⏳ Next |
-| 7 | Past papers / mock exams | ⏳ |
-| 8 | Evaluation | ⏳ |
+| 6 | Planning (weak topics, daily plans) | ✅ Done |
+| 7 | Past papers / mock exams | ✅ Done |
+| 8 | Evaluation | ⏳ Next |
 
 ## Setup
 
@@ -93,8 +93,8 @@ python -m app.main          # http://127.0.0.1:8000  (docs at /docs)
 ### Frontend (React + Vite)
 
 A single-page app in [`frontend/`](frontend/) with Chat, Search, Generate-Notes,
-Quiz, Progress and Library views. It calls the API through a dev proxy
-(`/api` → `:8000`).
+Quiz, Progress, Daily Plan, Past Papers and Library views. It calls the API
+through a dev proxy (`/api` → `:8000`).
 
 ```bash
 cd frontend
@@ -131,8 +131,30 @@ Endpoints live so far:
 - `POST /quizzes/generate` — generate a quiz (MCQ + short) from sources
 - `POST /quizzes/{id}/submit` — mark answers, record events, update confidence
 - `GET  /progress/{course}` — concept-level confidence, status, next review
+- `POST /plans/daily` — prioritised daily study plan (optionally saved to vault)
+- `POST /reports/weak-topics` — ranked weak-topic report
+- `POST /past-papers/analyze` — extract past-paper questions + exam frequency
+- `GET  /past-papers/{course}` — extracted questions
+- `POST /exams/generate` — generate an exam-style (long-answer) mock exam
 - `GET  /sync/status` — background sync state
 - `POST /sync/run` — trigger a sync (`?dry_run=true` to preview)
+
+### Planning & past papers (Phases 6-7)
+
+- **Planning:** `/plans/daily` ranks concepts by a transparent priority (low
+  confidence + high exam frequency + due-for-review), allocates focused time
+  blocks within your available minutes, suggests an action per concept, and can
+  save the plan to `StudyCopilot/Daily Plans/`. `/reports/weak-topics` writes a
+  ranked weak-topic report.
+- **Past papers:** `/past-papers/analyze` extracts questions from ingested past
+  papers (heuristic, works offline), links each to a known concept, and sets
+  every concept's `exam_frequency` (which then drives planning priority).
+  Concept linking matches against existing concept names — take a few quizzes
+  first (or run with LM Studio) so questions spread across real concepts rather
+  than all landing under "General".
+- **Mock exams:** `/exams/generate` reuses the quiz pipeline in an exam style
+  (longer short-answer questions); submit them via `/quizzes/{id}/submit` for
+  rubric-based feedback.
 
 ### Learning history (Phase 5)
 
@@ -209,11 +231,13 @@ app/
   models/       embedding + chat adapters (LM Studio / offline fallbacks)
   retrieval/    keyword (FTS5), vector, hybrid fusion, citations, service
   agent/        context builder, prompts, citation validation, study agent
-  generation/   revision notes, quiz generation + marking
-  learning/     concepts, confidence, spaced repetition, learning events
+  generation/   revision notes, quizzes + marking, plans/reports
+  learning/     concepts, confidence, spaced repetition, planner, events
+  exams/        past-paper extraction + exam-frequency estimation
   obsidian/     templates, links, path-safe note writer
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
-  api/          routers (health, ingest, courses, search, chat, notes, sync)
+  api/          routers (health, ingest, courses, search, chat, notes,
+                quizzes, plans, exams, sync)
 scripts/        CLI entrypoints (ingest, embed, sync)
 tests/          pytest suite
 ```

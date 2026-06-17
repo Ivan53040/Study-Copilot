@@ -9,6 +9,7 @@ from app.database.models import (
     Document,
     LearningEvent,
     Message,
+    PastPaperQuestion,
     Quiz,
     QuizQuestion,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "Document",
     "LearningEvent",
     "Message",
+    "PastPaperQuestion",
     "Quiz",
     "QuizQuestion",
     "get_session",

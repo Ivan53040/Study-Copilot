@@ -11,9 +11,11 @@ from app import __version__
 from app.api import (
     chat,
     courses,
+    exams,
     health,
     ingest,
     notes,
+    plans,
     quizzes,
     search,
     sync,
@@ -65,6 +67,8 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(notes.router)
     app.include_router(quizzes.router)
+    app.include_router(plans.router)
+    app.include_router(exams.router)
     app.include_router(sync.router)
     return app
 

@@ -1,10 +1,13 @@
 import type {
+  AnalyzeReport,
   ChatResponse,
   ConceptProgress,
   CourseSummary,
+  DailyPlan,
   DocumentRow,
   Health,
   NotePreview,
+  PastPaperQuestion,
   QuizResult,
   SearchResponse,
   SubmitResult,
@@ -97,4 +100,37 @@ export const api = {
     request<{ course: string; concepts: ConceptProgress[] }>(
       `/progress/${encodeURIComponent(course)}`,
     ),
+
+  dailyPlan: (body: {
+    course?: string | null;
+    available_minutes?: number;
+    exam_date?: string | null;
+    write?: boolean;
+  }) =>
+    request<DailyPlan>("/plans/daily", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  analyzePastPapers: (course: string | null) =>
+    request<AnalyzeReport>("/past-papers/analyze", {
+      method: "POST",
+      body: JSON.stringify({ course }),
+    }),
+
+  pastPapers: (course: string) =>
+    request<{ course: string; count: number; questions: PastPaperQuestion[] }>(
+      `/past-papers/${encodeURIComponent(course)}`,
+    ),
+
+  generateExam: (body: {
+    course?: string | null;
+    week?: number | null;
+    topic?: string | null;
+    num_questions?: number;
+  }) =>
+    request<QuizResult>("/exams/generate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

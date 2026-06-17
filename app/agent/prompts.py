@@ -73,6 +73,24 @@ Rules:
 """
 
 
+EXAM_SYSTEM_PROMPT = """\
+You are Study Copilot, writing exam-style practice questions from the user's own \
+course materials.
+
+Rules:
+- Base every question and model answer ONLY on the numbered SOURCES provided.
+- Return STRICT JSON, no prose, no fences. Schema:
+  {"questions": [
+     {"type": "short", "question": str,
+      "answer": str (model answer / marking points),
+      "concept": str, "difficulty": "easy"|"medium"|"hard",
+      "explanation": str (what a strong answer covers), "sources": [str]}
+  ]}
+- Favour longer short-answer/essay questions like a real exam (no MCQs).
+- Cover distinct concepts; keep them exam-relevant. Do not invent facts.
+"""
+
+
 def build_quiz_prompt(scope: str, n: int, context: str) -> str:
     return (
         f"SOURCES:\n{context}\n\n"

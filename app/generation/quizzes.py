@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app.agent.context import build_context
-from app.agent.prompts import QUIZ_SYSTEM_PROMPT, build_quiz_prompt
+from app.agent.prompts import (
+    EXAM_SYSTEM_PROMPT,
+    QUIZ_SYSTEM_PROMPT,
+    build_quiz_prompt,
+)
 from app.config.settings import Settings, get_settings
 from app.database.db import session_scope
 from app.database.models import Quiz, QuizQuestion
@@ -128,6 +132,7 @@ def generate_quiz(
     week: int | None = None,
     topic: str | None = None,
     num_questions: int = 5,
+    style: str = "quiz",  # "quiz" (mixed MCQ/short) or "exam" (short/essay)
     settings: Settings | None = None,
     adapter: ChatAdapter | None = None,
 ) -> QuizResult:
@@ -145,8 +150,9 @@ def generate_quiz(
             warnings=["No sources found for this scope; cannot generate a quiz."],
         )
 
+    system = EXAM_SYSTEM_PROMPT if style == "exam" else QUIZ_SYSTEM_PROMPT
     messages = [
-        ChatMessage(role="system", content=QUIZ_SYSTEM_PROMPT),
+        ChatMessage(role="system", content=system),
         ChatMessage(
             role="user",
             content=build_quiz_prompt(

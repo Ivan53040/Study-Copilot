@@ -238,6 +238,25 @@ class QuizQuestion(Base):
     quiz: Mapped["Quiz"] = relationship(back_populates="questions")
 
 
+class PastPaperQuestion(Base):
+    __tablename__ = "past_paper_questions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), default=None
+    )
+    number: Mapped[str | None] = mapped_column(String, default=None)
+    text: Mapped[str] = mapped_column(Text)
+    marks: Mapped[int | None] = mapped_column(Integer, default=None)
+    concept_id: Mapped[int | None] = mapped_column(
+        ForeignKey("concepts.id", ondelete="SET NULL"), index=True, default=None
+    )
+    concept_name: Mapped[str | None] = mapped_column(String, default=None)
+    content_hash: Mapped[str] = mapped_column(String, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class ChunkEmbedding(Base):
     __tablename__ = "chunk_embeddings"
 
