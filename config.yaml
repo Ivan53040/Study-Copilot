@@ -1,0 +1,63 @@
+# Study Copilot configuration
+# Edit paths/limits here. Source files are never modified by the app.
+
+vault:
+  # LOCAL working copy of the vault (fast, no iCloud placeholder issues).
+  # The app reads/writes here; a background job mirrors it to iCloud (see `sync`).
+  # Point Obsidian at this folder too.
+  root: "C:/Users/ivank/Documents/StudyVault"
+
+  # Folders the copilot may READ (glob patterns relative to vault root).
+  read_paths:
+    - "REIT6811 - Research Methods/**"
+
+  # The ONLY place the copilot may WRITE. Never widen this carelessly.
+  write_paths:
+    - "StudyCopilot/**"
+
+  # Always-blocked, even for reads.
+  denied_paths:
+    - "**/.obsidian/**"
+    - "**/.git/**"
+    - "**/.env"
+    - "**/.ssh/**"
+    - "**/.trash/**"
+
+# Read-only material that lives OUTSIDE the vault (e.g. past-paper PDFs).
+external_sources:
+  - path: "C:/Users/ivank/iCloudDrive/reit exam"
+    course: "REIT6811"
+    source_type: "past-paper"
+
+models:
+  default_provider: lmstudio
+  lmstudio:
+    base_url: "http://127.0.0.1:1234/v1"
+    model: "local-model"
+  cloud_fallback:
+    enabled: false
+    require_approval: true
+
+retrieval:
+  keyword_limit: 20
+  vector_limit: 20
+  final_context_limit: 8
+
+generation:
+  temperature: 0.1
+  require_citations: true
+
+# Two-way sync between the LOCAL vault (vault.root) and the iCloud folder.
+# A Windows scheduled task runs `python -m scripts.sync` every few minutes
+# (run_in_app: false so the app doesn't sync too and double-run).
+sync:
+  enabled: true
+  icloud_root: "C:/Users/ivank/iCloudDrive/iCloud~md~obsidian/Ivan Kung's Note"
+  mode: twoway          # twoway | mirror (exact one-way) | additive (one-way, no delete)
+  run_in_app: false     # let the scheduled task handle it
+  interval_minutes: 5
+  exclude_dirs:
+    - ".trash"
+
+# SQLAlchemy URL for metadata / chunks / learning history.
+database_url: "sqlite:///./data/study_copilot.db"
