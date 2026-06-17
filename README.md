@@ -15,8 +15,8 @@ Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
 | 1 | Ingestion: scan → parse → classify → chunk → index | ✅ Done |
 | 2 | Search: FTS5 + embeddings + hybrid retrieval | ✅ Done |
 | 3 | Grounded chat (LM Studio) with citations | ✅ Done |
-| 4 | Obsidian note generation | ⏳ Next |
-| 5 | Learning history (quizzes, confidence) | ⏳ |
+| 4 | Obsidian note generation | ✅ Done |
+| 5 | Learning history (quizzes, confidence) | ⏳ Next |
 | 6 | Planning (weak topics, daily plans) | ⏳ |
 | 7 | Past papers / mock exams | ⏳ |
 | 8 | Evaluation | ⏳ |
@@ -111,8 +111,22 @@ Endpoints live so far:
 - `POST /chat` — grounded Q&A; `{message, course?, conversation_id?}` → answer
   with `[S#]` citations, validated source list, and warnings
 - `GET  /conversations/{id}` — replay a conversation
+- `POST /notes/generate` — generate a revision note; `{course, week?, topic?,
+  write?}` → preview by default, `write:true` saves into `StudyCopilot/`
 - `GET  /sync/status` — background sync state
 - `POST /sync/run` — trigger a sync (`?dry_run=true` to preview)
+
+### Note generation (Phase 4)
+
+`POST /notes/generate` retrieves a week/topic's sources, asks the model for a
+structured note body with `[S#]` citations, then wraps it in **AI-generated
+frontmatter** (`source_type: ai-generated`, `reviewed_by_user: false`,
+`derived_from` backlinks), a review-warning banner, and a Sources section.
+
+- **Preview-first:** returns the markdown without writing unless `write:true`.
+- **Writes are confined to `StudyCopilot/Generated Notes/`** — the same
+  path-security layer that protects your source notes; attempts elsewhere 403.
+- Saved notes sync to iCloud automatically via the two-way sync.
 
 ### Grounded chat (Phase 3)
 
@@ -166,8 +180,10 @@ app/
   models/       embedding + chat adapters (LM Studio / offline fallbacks)
   retrieval/    keyword (FTS5), vector, hybrid fusion, citations, service
   agent/        context builder, prompts, citation validation, study agent
+  generation/   revision-note generation (quizzes/exams later)
+  obsidian/     templates, links, path-safe note writer
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
-  api/          FastAPI routers (health, ingest, courses, search, chat, sync)
+  api/          routers (health, ingest, courses, search, chat, notes, sync)
 scripts/        CLI entrypoints (ingest, embed, sync)
 tests/          pytest suite
 ```
