@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { api } from "../api";
+import { Icon } from "../icons";
 import type { TreeNode, VaultNote } from "../types";
 
 const slug = (s: string) =>
@@ -123,10 +124,12 @@ export function NotesPage({
   path,
   onOpen,
   tocOpen,
+  treeOpen,
 }: {
   path: string | null;
   onOpen: (path: string) => void;
   tocOpen: boolean;
+  treeOpen: boolean;
 }) {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [note, setNote] = useState<VaultNote | null>(null);
@@ -282,43 +285,49 @@ export function NotesPage({
 
   return (
     <div className="workspace">
-      <div className="ws-tree">
-        <div className="tree-toolbar">
-          <button className="icon-btn" title="New note" onClick={newNote}>🗎﹢</button>
-          <button className="icon-btn" title="New folder" onClick={newFolder}>🗀﹢</button>
-          <button
-            className="icon-btn"
-            title={`Sort ${sortDir === "asc" ? "Z→A" : "A→Z"}`}
-            onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-          >
-            {sortDir === "asc" ? "↓A" : "↑Z"}
-          </button>
-          <button className="icon-btn" title="Reveal current note" onClick={reveal}>
-            ⊙
-          </button>
-          <button
-            className="icon-btn"
-            title={allExpanded ? "Collapse all" : "Expand all"}
-            onClick={toggleExpandAll}
-          >
-            {allExpanded ? "⤡" : "⤢"}
-          </button>
+      {treeOpen && (
+        <div className="ws-tree">
+          <div className="tree-toolbar">
+            <button className="icon-btn" title="New note" onClick={newNote}>
+              <Icon name="file-plus" />
+            </button>
+            <button className="icon-btn" title="New folder" onClick={newFolder}>
+              <Icon name="folder-plus" />
+            </button>
+            <button
+              className="icon-btn"
+              title={`Sort ${sortDir === "asc" ? "Z→A" : "A→Z"}`}
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+            >
+              <Icon name="sort" />
+            </button>
+            <button className="icon-btn" title="Reveal current note" onClick={reveal}>
+              <Icon name="reveal" />
+            </button>
+            <button
+              className="icon-btn"
+              title={allExpanded ? "Collapse all" : "Expand all"}
+              onClick={toggleExpandAll}
+            >
+              <Icon name={allExpanded ? "collapse" : "expand"} />
+            </button>
+          </div>
+          {tree ? (
+            <TreeNodeView
+              node={tree}
+              depth={0}
+              current={note?.path ?? null}
+              expanded={expanded}
+              sortDir={sortDir}
+              onToggle={toggleFolder}
+              onOpen={onOpen}
+              activeRef={activeRef}
+            />
+          ) : (
+            <div className="muted small">Loading…</div>
+          )}
         </div>
-        {tree ? (
-          <TreeNodeView
-            node={tree}
-            depth={0}
-            current={note?.path ?? null}
-            expanded={expanded}
-            sortDir={sortDir}
-            onToggle={toggleFolder}
-            onOpen={onOpen}
-            activeRef={activeRef}
-          />
-        ) : (
-          <div className="muted small">Loading…</div>
-        )}
-      </div>
+      )}
 
       <div className="ws-main">
         {error && <div className="warn-banner">{error}</div>}

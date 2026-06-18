@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Health } from "./types";
+import { Icon } from "./icons";
 import { ChatPage } from "./pages/Chat";
 import { SearchPage } from "./pages/Search";
 import { GeneratePage } from "./pages/Generate";
@@ -23,36 +24,30 @@ type Tab =
   | "papers"
   | "library";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "notes", label: "📒  Notes" },
-  { id: "graph", label: "🕸️  Graph" },
-  { id: "search", label: "🔍  Search" },
-  { id: "generate", label: "✍️  Generate" },
-  { id: "quiz", label: "🧠  Quiz" },
-  { id: "progress", label: "📈  Progress" },
-  { id: "plan", label: "🗓️  Daily Plan" },
-  { id: "papers", label: "📄  Past Papers" },
-  { id: "library", label: "📚  Library" },
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: "notes", label: "Notes", icon: "file-text" },
+  { id: "graph", label: "Graph", icon: "graph" },
+  { id: "search", label: "Search", icon: "search" },
+  { id: "generate", label: "Generate", icon: "pencil" },
+  { id: "quiz", label: "Quiz", icon: "graduation-cap" },
+  { id: "progress", label: "Progress", icon: "trending-up" },
+  { id: "plan", label: "Plan", icon: "calendar" },
+  { id: "papers", label: "Past Papers", icon: "layers" },
+  { id: "library", label: "Library", icon: "book" },
 ];
 
 export function App() {
   const [tab, setTab] = useState<Tab>("notes");
   const [notePath, setNotePath] = useState<string | null>(null);
-  const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 900);
+  const [treeOpen, setTreeOpen] = useState(() => window.innerWidth >= 900);
   const [tocOpen, setTocOpen] = useState(() => window.innerWidth >= 1100);
   const [chatOpen, setChatOpen] = useState(false);
-
-  const selectTab = (id: Tab) => {
-    setTab(id);
-    if (window.innerWidth < 900) setLeftOpen(false); // close drawer on mobile
-  };
   const [health, setHealth] = useState<Health | null>(null);
   const [online, setOnline] = useState(false);
 
   const openNote = (path: string) => {
     setNotePath(path);
     setTab("notes");
-    if (window.innerWidth < 900) setLeftOpen(false);
   };
 
   useEffect(() => {
@@ -70,30 +65,51 @@ export function App() {
     };
   }, []);
 
-  const current = TABS.find((t) => t.id === tab);
+  const isNotes = tab === "notes";
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button
-          className="icon-btn"
-          title="Toggle sidebar"
-          onClick={() => setLeftOpen((o) => !o)}
-        >
-          ☰
-        </button>
+        {isNotes && (
+          <button
+            className={`icon-btn ${treeOpen ? "active" : ""}`}
+            title="Toggle file tree"
+            onClick={() => setTreeOpen((o) => !o)}
+          >
+            <Icon name="panel-left" size={17} />
+          </button>
+        )}
         <span className="brand">
           Study<span style={{ color: "var(--accent)" }}>Copilot</span>
         </span>
-        <span className="muted small">{current?.label}</span>
+
+        <nav className="topnav">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`nav-btn ${tab === t.id ? "active" : ""}`}
+              onClick={() => setTab(t.id)}
+              title={t.label}
+            >
+              <Icon name={t.icon} size={16} />
+              <span className="nav-label">{t.label}</span>
+            </button>
+          ))}
+        </nav>
+
         <div className="grow" />
-        {tab === "notes" && (
+
+        <span className="topstatus" title={health ? `model: ${health.default_provider} · vault: ${health.vault_exists ? "ok" : "missing"}` : ""}>
+          <span className={`dot ${online ? "ok" : "off"}`} />
+          <span className="status-text">{online ? "online" : "offline"}</span>
+        </span>
+        {isNotes && (
           <button
             className={`icon-btn ${tocOpen ? "active" : ""}`}
             title="Toggle outline"
             onClick={() => setTocOpen((o) => !o)}
           >
-            ▦
+            <Icon name="panel-right" size={17} />
           </button>
         )}
         <button
@@ -101,41 +117,19 @@ export function App() {
           title="Toggle chat panel"
           onClick={() => setChatOpen((o) => !o)}
         >
-          💬
+          <Icon name="message-square" size={17} />
         </button>
       </header>
 
       <div className="app-body">
-        {leftOpen && (
-          <aside className="sidebar">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                className={`nav-item ${tab === t.id ? "active" : ""}`}
-                onClick={() => selectTab(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-            <div className="status">
-              <div>
-                <span className={`dot ${online ? "ok" : "off"}`} />
-                {online ? "Backend online" : "Backend offline"}
-              </div>
-              {health && (
-                <div className="small" style={{ marginTop: 6 }}>
-                  model: {health.default_provider}
-                  <br />
-                  vault: {health.vault_exists ? "ok" : "missing"}
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
-
         <main className="main">
           {tab === "notes" && (
-            <NotesPage path={notePath} onOpen={openNote} tocOpen={tocOpen} />
+            <NotesPage
+              path={notePath}
+              onOpen={openNote}
+              tocOpen={tocOpen}
+              treeOpen={treeOpen}
+            />
           )}
           {tab === "graph" && <GraphPage onOpen={openNote} />}
           {tab === "search" && <SearchPage />}

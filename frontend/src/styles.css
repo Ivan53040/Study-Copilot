@@ -91,6 +91,46 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 }
 .icon-btn:hover { background: var(--panel-2); color: var(--text); border-color: transparent; }
 .icon-btn.active { color: var(--accent); background: var(--panel-2); }
+.icon-btn svg, .nav-btn svg { display: block; }
+
+.topbar .brand { flex-shrink: 0; }
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topnav::-webkit-scrollbar { height: 0; }
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.nav-btn:hover { background: var(--panel-2); color: var(--text); }
+.nav-btn.active { background: var(--panel-2); color: var(--accent); }
+.topstatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+@media (max-width: 1000px) {
+  .nav-label { display: none; }
+  .topstatus .status-text { display: none; }
+}
 
 .app { display: flex; min-height: 100vh; }
 .sidebar {
