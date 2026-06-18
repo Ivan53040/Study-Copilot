@@ -106,6 +106,31 @@ npm run dev      # http://localhost:5173
 Run the backend (`python -m app.main`) and the frontend together; open
 http://localhost:5173. The sidebar shows a live "Backend online" indicator.
 
+### Desktop app (Tauri)
+
+The same UI + backend are wrapped as a native desktop app ([`frontend/src-tauri/`](frontend/src-tauri/)).
+The packaged app is **single-launch**: the Rust shell starts the Python backend
+itself and opens a native window.
+
+Toolchain (one-time): **Rust**, the **VS C++ Build Tools** (Desktop C++ workload),
+and the **WebView2** runtime.
+
+```bash
+cd frontend
+npm run tauri dev     # dev window (also run the backend separately)
+npm run tauri build   # release: builds src-tauri/target/release/app.exe
+```
+
+- In **dev** the shell does *not* start the backend (run `python -m app.main`
+  yourself); in a **release** build it spawns `pythonw -m uvicorn` on launch and
+  stops it on exit (see [`src-tauri/src/lib.rs`](frontend/src-tauri/src/lib.rs)).
+- The release frontend calls the backend directly via `VITE_API_BASE`
+  (`frontend/.env.production`); the API client retries while the backend boots.
+- The backend path is currently baked for this machine (personal build). For a
+  portable installer, package the backend with PyInstaller
+  ([`scripts/desktop_backend.py`](scripts/desktop_backend.py)) and ship it as a
+  Tauri sidecar.
+
 Index embeddings for vector search (needs an embedding model loaded in LM
 Studio, e.g. `nomic-embed-text`; otherwise set `embeddings.provider: hash` in
 config for an offline fallback):

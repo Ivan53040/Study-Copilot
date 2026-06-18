@@ -19,22 +19,37 @@ import type {
 // Calls go through the Vite proxy (/api -> backend). Override with VITE_API_BASE.
 const BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
+  // The packaged app spawns the backend at launch, so the first calls may hit a
+  // not-yet-listening server. Retry connection failures (not HTTP errors).
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    let res: Response;
     try {
-      const body = await res.json();
-      detail = body.detail ?? JSON.stringify(body);
-    } catch {
-      /* ignore */
+      res = await fetch(`${BASE}${path}`, {
+        headers: { "Content-Type": "application/json" },
+        ...init,
+      });
+    } catch (e) {
+      lastErr = e; // network error (backend not up yet) -> retry
+      await sleep(700);
+      continue;
     }
-    throw new Error(`${res.status}: ${detail}`);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.detail ?? JSON.stringify(body);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status}: ${detail}`);
+    }
+    return res.json() as Promise<T>;
   }
-  return res.json() as Promise<T>;
+  throw new Error(`Cannot reach backend: ${(lastErr as Error)?.message ?? "network error"}`);
 }
 
 export const api = {
