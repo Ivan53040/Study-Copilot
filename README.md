@@ -227,6 +227,12 @@ slide-in **Chat panel** on the right. The file tree has an Obsidian-style
 toolbar — **new note**, **new folder**, **sort**, **reveal current note**, and
 **expand/collapse all**.
 
+**Tabs:** open multiple notes as tabs (`+` opens an empty tab with a note
+picker; Ctrl/⌘-click a note for a new tab; middle-click or ✕ to close). The tab
+bar has a **book ↔ pen** reading/edit toggle and a **⋮ menu** with file actions
+— rename, move, copy path, reveal in file explorer, open in default app, export
+to PDF, and delete (reversible — moved to `StudyCopilot/_backups/_deleted/`).
+
 Backed by `app/vault/` (filesystem-direct, independent of the RAG index) and the
 `/vault/*` endpoints.
 

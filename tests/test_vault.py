@@ -8,10 +8,13 @@ from app.security.paths import PathSecurityError
 from app.vault.service import (
     build_graph,
     create_folder,
+    delete_note,
+    export_pdf,
     extract_headings,
     extract_links,
     list_tree,
     read_note,
+    rename_note,
     search_notes,
     write_note,
 )
@@ -131,3 +134,31 @@ def test_create_folder_blocked_when_edit_disabled(vault):
     vault.workspace.allow_edit = False
     with pytest.raises(PathSecurityError):
         create_folder("Nope", vault)
+
+
+def test_rename_note(vault):
+    res = rename_note("A.md", "Renamed/A2.md", vault)
+    assert res["to"] == "Renamed/A2.md"
+    assert (vault.vault.root / "Renamed" / "A2.md").exists()
+    assert not (vault.vault.root / "A.md").exists()
+
+
+def test_rename_blocked_outside_vault(vault):
+    with pytest.raises(PathSecurityError):
+        rename_note("A.md", "../escaped.md", vault)
+
+
+def test_delete_note_is_reversible(vault):
+    res = delete_note("B.md", vault)
+    assert not (vault.vault.root / "B.md").exists()
+    from pathlib import Path
+
+    assert Path(res["backup"]).exists()  # moved to _backups/_deleted
+
+
+def test_export_pdf(vault):
+    res = export_pdf("A.md", vault)
+    from pathlib import Path
+
+    pdf = Path(res["pdf"])
+    assert pdf.exists() and pdf.suffix == ".pdf" and pdf.stat().st_size > 0

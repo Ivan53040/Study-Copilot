@@ -19,6 +19,9 @@ httpx==0.28.1
 # Vector math for retrieval
 numpy==2.2.1
 
+# Markdown -> HTML for PDF export
+markdown==3.7
+
 # Testing
 pytest==8.3.4
 pytest-asyncio==0.25.0

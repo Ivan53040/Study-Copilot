@@ -175,4 +175,34 @@ export const api = {
     request<{ results: { path: string; title: string }[] }>(
       `/vault/search?q=${encodeURIComponent(q)}`,
     ),
+
+  vaultRename: (from_path: string, to_path: string) =>
+    request<{ from: string; to: string }>("/vault/rename", {
+      method: "POST",
+      body: JSON.stringify({ from_path, to_path }),
+    }),
+
+  vaultDelete: (path: string) =>
+    request<{ deleted: string; backup: string }>("/vault/delete", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+
+  vaultReveal: (path: string) =>
+    request<{ revealed: string }>("/vault/reveal", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+
+  vaultOpenExternal: (path: string) =>
+    request<{ opened: string }>("/vault/open-external", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+
+  vaultExportPdf: (path: string) =>
+    request<{ pdf: string }>("/vault/export-pdf", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
 };

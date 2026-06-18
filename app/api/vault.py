@@ -10,8 +10,13 @@ from app.security.paths import PathSecurityError
 from app.vault.service import (
     build_graph,
     create_folder,
+    delete_note,
+    export_pdf,
     list_tree,
+    open_external,
     read_note,
+    rename_note,
+    reveal_note,
     search_notes,
     write_note,
 )
@@ -25,6 +30,15 @@ class NoteWrite(BaseModel):
 
 
 class FolderCreate(BaseModel):
+    path: str
+
+
+class RenameReq(BaseModel):
+    from_path: str
+    to_path: str
+
+
+class PathReq(BaseModel):
     path: str
 
 
@@ -59,6 +73,52 @@ def post_folder(
 ) -> dict:
     try:
         return create_folder(req.path, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/rename")
+def post_rename(req: RenameReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return rename_note(req.from_path, req.to_path, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/delete")
+def post_delete(req: PathReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return delete_note(req.path, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/reveal")
+def post_reveal(req: PathReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return reveal_note(req.path, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/open-external")
+def post_open(req: PathReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return open_external(req.path, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/export-pdf")
+def post_export_pdf(req: PathReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return export_pdf(req.path, settings)
     except PathSecurityError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 

@@ -121,6 +121,43 @@ function TreeNodeView(props: NodeProps) {
   );
 }
 
+// Empty-tab note picker: search the vault and open a note into this tab.
+function NewTabPicker({ onPick }: { onPick: (path: string) => void }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<{ path: string; title: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api
+      .vaultSearch(q)
+      .then((r) => alive && setResults(r.results.slice(0, 20)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [q]);
+  return (
+    <div className="newtab-picker">
+      <input
+        autoFocus
+        placeholder="Search notes to open…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      <div className="newtab-results">
+        {results.map((r) => (
+          <div
+            key={r.path}
+            className="newtab-result"
+            onClick={() => onPick(r.path)}
+          >
+            {r.title} <span className="muted small">· {r.path}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function NotesPage({
   path,
   tocOpen,
@@ -156,6 +193,29 @@ export function NotesPage({
   useEffect(() => localStorage.setItem("ws.tocWidth", String(tocWidth)), [tocWidth]);
 
   const refreshTree = () => api.vaultTree().then(setTree);
+
+  const newCounter = useRef(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
+  const flash = (m: string) => {
+    setBanner(m);
+    setTimeout(() => setBanner(null), 4000);
+  };
+  const isNewTab = (id: string | null) => !!id && id.startsWith("new:");
+
+  const openNewTab = () => {
+    const id = `new:${++newCounter.current}`;
+    setTabs((p) => [...p, id]);
+    setActive(id);
+  };
+  const pickInNewTab = (path: string) => {
+    setTabs((prev) => {
+      const arr = prev.filter((x) => x !== activeRef.current);
+      if (!arr.includes(path)) arr.push(path);
+      return arr;
+    });
+    setActive(path);
+  };
 
   const openInTab = useCallback((p: string, newTab: boolean) => {
     setTabs((prev) => {
@@ -197,9 +257,9 @@ export function NotesPage({
     if (path) openInTab(path, true);
   }, [path, openInTab]);
 
-  // Load the active note.
+  // Load the active note (skip empty "new tab" placeholders).
   useEffect(() => {
-    if (!active) {
+    if (!active || active.startsWith("new:")) {
       setNote(null);
       return;
     }
@@ -347,6 +407,98 @@ export function NotesPage({
     }
   };
 
+  const toggleEdit = async () => {
+    if (!note) return;
+    if (editing) {
+      if (draft !== note.content) await save();
+      setEditing(false);
+    } else {
+      setEditing(true);
+    }
+  };
+
+  // --- tab-bar more-options actions (operate on the active note) ---
+  const actionable = !!note && !isNewTab(active);
+
+  const handleRename = async () => {
+    if (!actionable || !active) return;
+    const cur = basename(active);
+    const name = window.prompt("Rename note to:", cur);
+    if (!name || name === cur) return;
+    const dir = active.includes("/") ? active.slice(0, active.lastIndexOf("/") + 1) : "";
+    let to = dir + name;
+    if (!/\.(md|markdown|txt)$/i.test(to)) to += ".md";
+    try {
+      const r = await api.vaultRename(active, to);
+      setTabs((p) => p.map((x) => (x === active ? r.to : x)));
+      setActive(r.to);
+      await refreshTree();
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
+  const handleMove = async () => {
+    if (!actionable || !active) return;
+    const curDir = active.includes("/") ? active.slice(0, active.lastIndexOf("/")) : "";
+    const folder = window.prompt("Move to folder (vault-relative):", curDir);
+    if (folder === null) return;
+    const to = (folder ? folder.replace(/\/+$/, "") + "/" : "") + basename(active);
+    try {
+      const r = await api.vaultRename(active, to);
+      setTabs((p) => p.map((x) => (x === active ? r.to : x)));
+      setActive(r.to);
+      await refreshTree();
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
+  const handleCopyPath = async () => {
+    if (!actionable || !active) return;
+    try {
+      await navigator.clipboard.writeText(active);
+      flash("Path copied");
+    } catch {
+      flash(active);
+    }
+  };
+
+  const handleReveal = async () => {
+    if (actionable && active) {
+      try { await api.vaultReveal(active); } catch (e) { flash((e as Error).message); }
+    }
+  };
+  const handleOpenExternal = async () => {
+    if (actionable && active) {
+      try { await api.vaultOpenExternal(active); } catch (e) { flash((e as Error).message); }
+    }
+  };
+  const handleExportPdf = async () => {
+    if (!actionable || !active) return;
+    try {
+      const r = await api.vaultExportPdf(active);
+      flash(`Exported PDF: ${r.pdf}`);
+      const rel = `StudyCopilot/Exports/${stripExt(basename(active))}.pdf`;
+      api.vaultOpenExternal(rel).catch(() => {});
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+  const handleDelete = async () => {
+    if (!actionable || !active) return;
+    if (!window.confirm(`Delete "${basename(active)}"?\nIt is moved to a backup (reversible).`)) return;
+    const target = active;
+    try {
+      await api.vaultDelete(target);
+      closeTab(target);
+      await refreshTree();
+      flash("Deleted (backup kept)");
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
   const showToc = tocOpen && !!note;
 
   return (
@@ -399,62 +551,111 @@ export function NotesPage({
       )}
 
       <div className="ws-main">
-        {tabs.length > 0 && (
-          <div className="tabbar">
-            {tabs.map((p) => (
-              <div
-                key={p}
-                className={`tab ${p === active ? "active" : ""}`}
-                onClick={() => setActive(p)}
-                onMouseDown={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    closeTab(p);
-                  }
+        <div className="tabbar">
+          {tabs.map((p) => (
+            <div
+              key={p}
+              className={`tab ${p === active ? "active" : ""} ${isNewTab(p) ? "newtab" : ""}`}
+              onClick={() => setActive(p)}
+              onMouseDown={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  closeTab(p);
+                }
+              }}
+              title={isNewTab(p) ? "New tab" : p}
+            >
+              <span className="tab-label">
+                {isNewTab(p) ? "New tab" : stripExt(basename(p))}
+              </span>
+              <span
+                className="tab-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(p);
                 }}
-                title={p}
               >
-                <span className="tab-label">{stripExt(basename(p))}</span>
-                <span
-                  className="tab-close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(p);
-                  }}
+                ✕
+              </span>
+            </div>
+          ))}
+          <button className="tab-add icon-btn" title="Open new tab" onClick={openNewTab}>
+            +
+          </button>
+
+          {actionable && (
+            <div className="tab-actions">
+              {editing && note && draft !== note.content && (
+                <button
+                  className="icon-btn"
+                  style={{ color: "var(--accent)" }}
+                  title="Save"
+                  onClick={save}
+                  disabled={saving}
                 >
-                  ✕
-                </span>
+                  Save
+                </button>
+              )}
+              <button
+                className="icon-btn"
+                title={editing ? "Reading view" : "Edit"}
+                onClick={toggleEdit}
+              >
+                <Icon name={editing ? "pencil" : "book"} size={17} />
+              </button>
+              <div className="menu-wrap">
+                <button
+                  className="icon-btn"
+                  title="More options"
+                  onClick={() => setMenuOpen((o) => !o)}
+                >
+                  <Icon name="more-vertical" size={17} />
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
+                    <div className="more-menu">
+                      <button className="more-item" onClick={() => { setMenuOpen(false); handleRename(); }}>
+                        <Icon name="pencil" size={15} /> Rename…
+                      </button>
+                      <button className="more-item" onClick={() => { setMenuOpen(false); handleMove(); }}>
+                        <Icon name="folder" size={15} /> Move to folder…
+                      </button>
+                      <button className="more-item" onClick={() => { setMenuOpen(false); handleCopyPath(); }}>
+                        <Icon name="copy" size={15} /> Copy path
+                      </button>
+                      <div className="more-sep" />
+                      <button className="more-item" onClick={() => { setMenuOpen(false); handleReveal(); }}>
+                        <Icon name="reveal" size={15} /> Reveal in file explorer
+                      </button>
+                      <button className="more-item" onClick={() => { setMenuOpen(false); handleOpenExternal(); }}>
+                        <Icon name="external-link" size={15} /> Open in default app
+                      </button>
+                      <button className="more-item" onClick={() => { setMenuOpen(false); handleExportPdf(); }}>
+                        <Icon name="download" size={15} /> Export to PDF
+                      </button>
+                      <div className="more-sep" />
+                      <button className="more-item danger" onClick={() => { setMenuOpen(false); handleDelete(); }}>
+                        <Icon name="trash" size={15} /> Delete file
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
-            ))}
-            <button className="tab-add icon-btn" title="New note" onClick={newNote}>
-              +
-            </button>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
         <div className="ws-content">
+          {banner && <div className="note-banner">{banner}</div>}
           {error && <div className="warn-banner">{error}</div>}
-          {!note ? (
-            <div className="muted">Select a note from the tree.</div>
+          {isNewTab(active) ? (
+            <NewTabPicker onPick={pickInNewTab} />
+          ) : !note ? (
+            <div className="muted">Select a note from the tree, or press + for a new tab.</div>
           ) : (
             <>
-              <div className="row" style={{ marginBottom: 10, alignItems: "center" }}>
-                <h2 className="page-title" style={{ margin: 0 }}>{note.name}</h2>
-                <div className="grow" />
-                {note.editable &&
-                  (editing ? (
-                    <>
-                      <button className="primary" onClick={save} disabled={saving}>
-                        {saving ? "Saving…" : "Save"}
-                      </button>
-                      <button onClick={() => { setEditing(false); setDraft(note.content); }}>
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button onClick={() => setEditing(true)}>Edit</button>
-                  ))}
-              </div>
+              <h2 className="page-title" style={{ margin: "0 0 4px" }}>{note.name}</h2>
               <div className="small muted" style={{ marginBottom: 12 }}>{note.path}</div>
               {editing ? (
                 <textarea

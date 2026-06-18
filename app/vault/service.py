@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -238,6 +240,101 @@ def create_folder(relpath: str, settings: Settings | None = None) -> dict:
         raise PathSecurityError(f"Folder not allowed: {relpath}")
     p.mkdir(parents=True, exist_ok=True)
     return {"path": relpath, "created": True}
+
+
+def rename_note(
+    from_rel: str, to_rel: str, settings: Settings | None = None
+) -> dict:
+    """Rename/move a note within the vault (text files only)."""
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    src = assert_workspace_writable(root / from_rel, settings)
+    if not src.exists():
+        raise FileNotFoundError(f"Note not found: {from_rel}")
+    dst = assert_workspace_writable(root / to_rel, settings)
+    if dst.exists():
+        raise FileExistsError(f"Target already exists: {to_rel}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    new_rel = dst.relative_to(root).as_posix()
+    logger.info("Renamed note %s -> %s", from_rel, new_rel)
+    return {"from": from_rel, "to": new_rel}
+
+
+def delete_note(relpath: str, settings: Settings | None = None) -> dict:
+    """Delete a note reversibly (moved to StudyCopilot/_backups/_deleted/)."""
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    src = assert_workspace_writable(root / relpath, settings)
+    if not src.exists():
+        raise FileNotFoundError(f"Note not found: {relpath}")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dest = root / "StudyCopilot" / "_backups" / "_deleted" / f"{relpath}.{stamp}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dest))
+    logger.info("Deleted note %s (backup %s)", relpath, dest)
+    return {"deleted": relpath, "backup": str(dest)}
+
+
+def reveal_note(relpath: str, settings: Settings | None = None) -> dict:
+    """Open the OS file explorer with the note selected (Windows)."""
+    settings = settings or get_settings()
+    p = assert_workspace_readable(_vault_root(settings) / relpath, settings)
+    # explorer often returns a non-zero exit even on success; don't check it.
+    subprocess.Popen(["explorer", f"/select,{p}"])
+    return {"revealed": relpath}
+
+
+def open_external(relpath: str, settings: Settings | None = None) -> dict:
+    """Open the note in the OS default application (Windows)."""
+    settings = settings or get_settings()
+    p = assert_workspace_readable(_vault_root(settings) / relpath, settings)
+    os.startfile(str(p))  # noqa: S606 - Windows desktop app, user-initiated
+    return {"opened": relpath}
+
+
+_PDF_CSS = """
+body { font-family: sans-serif; font-size: 11pt; line-height: 1.5; color: #111; }
+h1 { font-size: 20pt; } h2 { font-size: 15pt; } h3 { font-size: 12pt; }
+code { background: #f0f0f0; padding: 1px 3px; }
+pre { background: #f5f5f5; padding: 8px; }
+blockquote { border-left: 3px solid #ccc; margin-left: 0; padding-left: 10px; color: #555; }
+table { border-collapse: collapse; } td, th { border: 1px solid #ccc; padding: 4px 8px; }
+"""
+
+
+def export_pdf(relpath: str, settings: Settings | None = None) -> dict:
+    """Render the note's Markdown to a PDF under StudyCopilot/Exports/."""
+    import fitz  # PyMuPDF
+    import markdown as md
+
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    p = assert_workspace_readable(root / relpath, settings)
+    raw = p.read_text(encoding="utf-8", errors="replace")
+    try:
+        body = frontmatter.loads(raw).content
+    except Exception:
+        body = raw
+    html_body = md.markdown(body, extensions=["extra", "sane_lists", "tables"])
+    html = f"<html><head><style>{_PDF_CSS}</style></head><body><h1>{p.stem}</h1>{html_body}</body></html>"
+
+    out = root / "StudyCopilot" / "Exports" / f"{p.stem}.pdf"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    story = fitz.Story(html=html)
+    writer = fitz.DocumentWriter(str(out))
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (50, 50, -50, -50)
+    more = 1
+    while more:
+        dev = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(dev)
+        writer.end_page()
+    writer.close()
+    logger.info("Exported PDF %s -> %s", relpath, out)
+    return {"pdf": str(out)}
 
 
 def build_graph(settings: Settings | None = None) -> dict:
