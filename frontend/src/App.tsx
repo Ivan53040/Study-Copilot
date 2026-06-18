@@ -38,15 +38,21 @@ const TABS: { id: Tab; label: string }[] = [
 export function App() {
   const [tab, setTab] = useState<Tab>("notes");
   const [notePath, setNotePath] = useState<string | null>(null);
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [tocOpen, setTocOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 900);
+  const [tocOpen, setTocOpen] = useState(() => window.innerWidth >= 1100);
   const [chatOpen, setChatOpen] = useState(false);
+
+  const selectTab = (id: Tab) => {
+    setTab(id);
+    if (window.innerWidth < 900) setLeftOpen(false); // close drawer on mobile
+  };
   const [health, setHealth] = useState<Health | null>(null);
   const [online, setOnline] = useState(false);
 
   const openNote = (path: string) => {
     setNotePath(path);
     setTab("notes");
+    if (window.innerWidth < 900) setLeftOpen(false);
   };
 
   useEffect(() => {
@@ -106,7 +112,7 @@ export function App() {
               <button
                 key={t.id}
                 className={`nav-item ${tab === t.id ? "active" : ""}`}
-                onClick={() => setTab(t.id)}
+                onClick={() => selectTab(t.id)}
               >
                 {t.label}
               </button>

@@ -16,6 +16,23 @@
 
 * { box-sizing: border-box; }
 
+/* Theme the scrollbars to the dark palette */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b4250;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -62,7 +79,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   border-bottom: 1px solid var(--border);
 }
 .topbar .brand { font-size: 15px; padding: 0; }
-.app-body { flex: 1; display: flex; min-height: 0; }
+.app-body { flex: 1; display: flex; min-height: 0; position: relative; }
 .icon-btn {
   background: transparent;
   border: 1px solid transparent;
@@ -89,8 +106,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   overflow-y: auto;
 }
 .chat-dock {
-  width: 400px;
-  min-width: 400px;
+  width: min(400px, 38vw);
+  min-width: 320px;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);
@@ -174,7 +191,7 @@ th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--bor
 th { color: var(--muted); font-weight: 600; }
 
 /* Notes workspace */
-.workspace { display: flex; gap: 14px; height: calc(100vh - 60px); }
+.workspace { display: flex; gap: 14px; height: 100%; }
 .ws-tree { width: 240px; min-width: 240px; overflow-y: auto; border-right: 1px solid var(--border); padding-right: 8px; }
 .ws-main { flex: 1; overflow-y: auto; min-width: 0; }
 .ws-toc { width: 210px; min-width: 210px; overflow-y: auto; border-left: 1px solid var(--border); padding-left: 12px; }
@@ -200,3 +217,35 @@ th { color: var(--muted); font-weight: 600; }
 .spinner { color: var(--muted); }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
 pre { background: var(--panel-2); padding: 12px; border-radius: 8px; overflow-x: auto; }
+
+/* ---- Responsive ---- */
+.sidebar, .chat-dock { transition: transform 0.15s ease; }
+
+/* Chat dock becomes an overlay drawer on narrower screens. */
+@media (max-width: 1100px) {
+  .chat-dock {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: min(400px, 92vw);
+    z-index: 30;
+    box-shadow: -4px 0 18px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* Left nav becomes an overlay drawer on small screens. */
+@media (max-width: 900px) {
+  .sidebar {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    z-index: 31;
+    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.45);
+  }
+  .main { padding: 16px 16px; }
+  .ws-toc { display: none; }   /* outline hidden on small; reopen on wider */
+}
+
+@media (max-width: 640px) {
+  .ws-tree { width: 180px; min-width: 180px; }
+  .topbar .muted { display: none; }
+  .workspace { gap: 8px; }
+}
