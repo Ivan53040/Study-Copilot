@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { api } from "../api";
@@ -18,7 +18,6 @@ function stripFrontmatter(raw: string): string {
   return raw;
 }
 
-// [[Target]], [[Target#h]], [[Target|alias]] -> [alias|Target](wikilink:Target)
 function wikilinksToMd(text: string): string {
   return text.replace(
     /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g,
@@ -35,46 +34,85 @@ function toText(children: React.ReactNode): string {
   return "";
 }
 
-interface TreeProps {
+const stripExt = (name: string) => name.replace(/\.(md|markdown|txt)$/i, "");
+
+function collectFolders(node: TreeNode, acc: string[] = []): string[] {
+  node.children?.forEach((c) => {
+    if (c.type === "folder") {
+      acc.push(c.path);
+      collectFolders(c, acc);
+    }
+  });
+  return acc;
+}
+
+function ancestorsOf(path: string): string[] {
+  const parts = path.split("/");
+  const out: string[] = [];
+  for (let i = 1; i < parts.length; i++) out.push(parts.slice(0, i).join("/"));
+  return out;
+}
+
+function sortChildren(children: TreeNode[], dir: "asc" | "desc"): TreeNode[] {
+  const folders = children.filter((c) => c.type === "folder");
+  const files = children.filter((c) => c.type === "file");
+  const cmp = (a: TreeNode, b: TreeNode) =>
+    dir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+  folders.sort(cmp);
+  files.sort(cmp);
+  return [...folders, ...files];
+}
+
+interface NodeProps {
   node: TreeNode;
   depth: number;
   current: string | null;
-  onOpen: (path: string) => void;
+  expanded: Set<string>;
+  sortDir: "asc" | "desc";
+  onToggle: (p: string) => void;
+  onOpen: (p: string) => void;
+  activeRef: React.RefObject<HTMLDivElement>;
 }
 
-function Tree({ node, depth, current, onOpen }: TreeProps) {
-  const [open, setOpen] = useState(depth < 1);
+function TreeNodeView(props: NodeProps) {
+  const { node, depth, current, expanded, sortDir, onToggle, onOpen, activeRef } =
+    props;
+
   if (node.type === "file") {
+    const active = current === node.path;
     return (
       <div
-        className={`tree-row ${current === node.path ? "active" : ""}`}
+        ref={active ? activeRef : undefined}
+        className={`tree-row ${active ? "active" : ""}`}
         style={{ paddingLeft: 6 + depth * 12 }}
         onClick={() => onOpen(node.path)}
         title={node.path}
       >
-        {node.name.replace(/\.(md|markdown|txt)$/, "")}
+        {stripExt(node.name)}
       </div>
     );
   }
+
+  const isRoot = node.name === "";
+  const open = isRoot || expanded.has(node.path);
   return (
     <div>
-      {node.name && (
+      {!isRoot && (
         <div
           className="tree-row tree-folder"
           style={{ paddingLeft: 6 + depth * 12 }}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => onToggle(node.path)}
         >
           {open ? "▾" : "▸"} {node.name}
         </div>
       )}
       {open &&
-        node.children?.map((c) => (
-          <Tree
+        sortChildren(node.children ?? [], sortDir).map((c) => (
+          <TreeNodeView
             key={c.path}
+            {...props}
             node={c}
-            depth={node.name ? depth + 1 : depth}
-            current={current}
-            onOpen={onOpen}
+            depth={isRoot ? depth : depth + 1}
           />
         ))}
     </div>
@@ -84,9 +122,11 @@ function Tree({ node, depth, current, onOpen }: TreeProps) {
 export function NotesPage({
   path,
   onOpen,
+  tocOpen,
 }: {
   path: string | null;
   onOpen: (path: string) => void;
+  tocOpen: boolean;
 }) {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [note, setNote] = useState<VaultNote | null>(null);
@@ -94,15 +134,30 @@ export function NotesPage({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const activeRef = useRef<HTMLDivElement>(null);
+
+  const refreshTree = () => api.vaultTree().then(setTree);
 
   useEffect(() => {
-    api.vaultTree().then(setTree).catch((e) => setError((e as Error).message));
+    api
+      .vaultTree()
+      .then((t) => {
+        setTree(t);
+        // Expand top-level folders by default.
+        setExpanded(
+          new Set((t.children ?? []).filter((c) => c.type === "folder").map((c) => c.path)),
+        );
+      })
+      .catch((e) => setError((e as Error).message));
   }, []);
 
   useEffect(() => {
     if (!path) return;
     setEditing(false);
     setError(null);
+    setExpanded((prev) => new Set([...prev, ...ancestorsOf(path)]));
     api
       .vaultNote(path)
       .then((n) => {
@@ -111,6 +166,10 @@ export function NotesPage({
       })
       .catch((e) => setError((e as Error).message));
   }, [path]);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [note]);
 
   const linkMap = useMemo(() => {
     const m: Record<string, string | null> = {};
@@ -155,6 +214,55 @@ export function NotesPage({
     [note],
   );
 
+  const toggleFolder = (p: string) =>
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      n.has(p) ? n.delete(p) : n.add(p);
+      return n;
+    });
+
+  const newNote = async () => {
+    const name = window.prompt("New note (optionally Folder/Name):");
+    if (!name) return;
+    let p = name.trim();
+    if (!/\.(md|markdown|txt)$/i.test(p)) p += ".md";
+    try {
+      await api.vaultSaveNote(p, `# ${stripExt(p.split("/").pop()!)}\n\n`);
+      await refreshTree();
+      setExpanded((prev) => new Set([...prev, ...ancestorsOf(p)]));
+      onOpen(p);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const newFolder = async () => {
+    const name = window.prompt("New folder (optionally Parent/Child):");
+    if (!name) return;
+    try {
+      await api.vaultCreateFolder(name.trim());
+      await refreshTree();
+      setExpanded((prev) => new Set([...prev, name.trim(), ...ancestorsOf(name.trim())]));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const reveal = () => {
+    if (note) {
+      setExpanded((prev) => new Set([...prev, ...ancestorsOf(note.path)]));
+      setTimeout(
+        () => activeRef.current?.scrollIntoView({ block: "center" }),
+        50,
+      );
+    }
+  };
+
+  const allFolders = tree ? collectFolders(tree) : [];
+  const allExpanded = expanded.size >= allFolders.length && allFolders.length > 0;
+  const toggleExpandAll = () =>
+    setExpanded(allExpanded ? new Set() : new Set(allFolders));
+
   const save = async () => {
     if (!note) return;
     setSaving(true);
@@ -175,8 +283,38 @@ export function NotesPage({
   return (
     <div className="workspace">
       <div className="ws-tree">
+        <div className="tree-toolbar">
+          <button className="icon-btn" title="New note" onClick={newNote}>🗎﹢</button>
+          <button className="icon-btn" title="New folder" onClick={newFolder}>🗀﹢</button>
+          <button
+            className="icon-btn"
+            title={`Sort ${sortDir === "asc" ? "Z→A" : "A→Z"}`}
+            onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+          >
+            {sortDir === "asc" ? "↓A" : "↑Z"}
+          </button>
+          <button className="icon-btn" title="Reveal current note" onClick={reveal}>
+            ⊙
+          </button>
+          <button
+            className="icon-btn"
+            title={allExpanded ? "Collapse all" : "Expand all"}
+            onClick={toggleExpandAll}
+          >
+            {allExpanded ? "⤡" : "⤢"}
+          </button>
+        </div>
         {tree ? (
-          <Tree node={tree} depth={0} current={note?.path ?? null} onOpen={onOpen} />
+          <TreeNodeView
+            node={tree}
+            depth={0}
+            current={note?.path ?? null}
+            expanded={expanded}
+            sortDir={sortDir}
+            onToggle={toggleFolder}
+            onOpen={onOpen}
+            activeRef={activeRef}
+          />
         ) : (
           <div className="muted small">Loading…</div>
         )}
@@ -222,35 +360,37 @@ export function NotesPage({
         )}
       </div>
 
-      <div className="ws-toc">
-        {note && note.headings.length > 0 && (
-          <>
-            <div className="small muted" style={{ marginBottom: 6 }}>On this page</div>
-            {note.headings.map((h, i) => (
-              <a
-                key={i}
-                className="toc-item"
-                href={`#${h.slug}`}
-                style={{ paddingLeft: (h.level - 1) * 10 }}
-              >
-                {h.text}
-              </a>
-            ))}
-          </>
-        )}
-        {note && note.backlinks.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <div className="small muted" style={{ marginBottom: 6 }}>
-              Linked mentions ({note.backlinks.length})
-            </div>
-            {note.backlinks.map((b) => (
-              <div key={b.path} className="toc-item" onClick={() => onOpen(b.path)}>
-                {b.title}
+      {tocOpen && note && (note.headings.length > 0 || note.backlinks.length > 0) && (
+        <div className="ws-toc">
+          {note.headings.length > 0 && (
+            <>
+              <div className="small muted" style={{ marginBottom: 6 }}>On this page</div>
+              {note.headings.map((h, i) => (
+                <a
+                  key={i}
+                  className="toc-item"
+                  href={`#${h.slug}`}
+                  style={{ paddingLeft: (h.level - 1) * 10 }}
+                >
+                  {h.text}
+                </a>
+              ))}
+            </>
+          )}
+          {note.backlinks.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="small muted" style={{ marginBottom: 6 }}>
+                Linked mentions ({note.backlinks.length})
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              {note.backlinks.map((b) => (
+                <div key={b.path} className="toc-item" onClick={() => onOpen(b.path)}>
+                  {b.title}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -197,6 +197,11 @@ The app doubles as an Obsidian-style workspace over the **whole vault**:
 - **Graph** — an interactive force-directed graph of notes linked by wikilinks;
   click a node to open it.
 
+UI: a top bar toggles the left sidebar, the note **outline (TOC)**, and a
+slide-in **Chat panel** on the right. The file tree has an Obsidian-style
+toolbar — **new note**, **new folder**, **sort**, **reveal current note**, and
+**expand/collapse all**.
+
 Backed by `app/vault/` (filesystem-direct, independent of the RAG index) and the
 `/vault/*` endpoints.
 

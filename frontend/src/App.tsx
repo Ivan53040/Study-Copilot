@@ -15,7 +15,6 @@ import { PastPapersPage } from "./pages/PastPapers";
 type Tab =
   | "notes"
   | "graph"
-  | "chat"
   | "search"
   | "generate"
   | "quiz"
@@ -27,7 +26,6 @@ type Tab =
 const TABS: { id: Tab; label: string }[] = [
   { id: "notes", label: "📒  Notes" },
   { id: "graph", label: "🕸️  Graph" },
-  { id: "chat", label: "💬  Chat" },
   { id: "search", label: "🔍  Search" },
   { id: "generate", label: "✍️  Generate" },
   { id: "quiz", label: "🧠  Quiz" },
@@ -40,8 +38,11 @@ const TABS: { id: Tab; label: string }[] = [
 export function App() {
   const [tab, setTab] = useState<Tab>("notes");
   const [notePath, setNotePath] = useState<string | null>(null);
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [tocOpen, setTocOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
-  const [online, setOnline] = useState<boolean>(false);
+  const [online, setOnline] = useState(false);
 
   const openNote = (path: string) => {
     setNotePath(path);
@@ -53,12 +54,7 @@ export function App() {
     const ping = () =>
       api
         .health()
-        .then((h) => {
-          if (alive) {
-            setHealth(h);
-            setOnline(true);
-          }
-        })
+        .then((h) => alive && (setHealth(h), setOnline(true)))
         .catch(() => alive && setOnline(false));
     ping();
     const t = setInterval(ping, 10000);
@@ -68,48 +64,89 @@ export function App() {
     };
   }, []);
 
-  return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          Study<span>Copilot</span>
-        </div>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`nav-item ${tab === t.id ? "active" : ""}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-        <div className="status">
-          <div>
-            <span className={`dot ${online ? "ok" : "off"}`} />
-            {online ? "Backend online" : "Backend offline"}
-          </div>
-          {health && (
-            <div className="small" style={{ marginTop: 6 }}>
-              model: {health.default_provider}
-              <br />
-              vault: {health.vault_exists ? "ok" : "missing"}
-            </div>
-          )}
-        </div>
-      </aside>
+  const current = TABS.find((t) => t.id === tab);
 
-      <main className="main">
-        {tab === "notes" && <NotesPage path={notePath} onOpen={openNote} />}
-        {tab === "graph" && <GraphPage onOpen={openNote} />}
-        {tab === "chat" && <ChatPage />}
-        {tab === "search" && <SearchPage />}
-        {tab === "generate" && <GeneratePage />}
-        {tab === "quiz" && <QuizPage />}
-        {tab === "progress" && <ProgressPage />}
-        {tab === "plan" && <PlanPage />}
-        {tab === "papers" && <PastPapersPage />}
-        {tab === "library" && <LibraryPage />}
-      </main>
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <button
+          className="icon-btn"
+          title="Toggle sidebar"
+          onClick={() => setLeftOpen((o) => !o)}
+        >
+          ☰
+        </button>
+        <span className="brand">
+          Study<span style={{ color: "var(--accent)" }}>Copilot</span>
+        </span>
+        <span className="muted small">{current?.label}</span>
+        <div className="grow" />
+        {tab === "notes" && (
+          <button
+            className={`icon-btn ${tocOpen ? "active" : ""}`}
+            title="Toggle outline"
+            onClick={() => setTocOpen((o) => !o)}
+          >
+            ▦
+          </button>
+        )}
+        <button
+          className={`icon-btn ${chatOpen ? "active" : ""}`}
+          title="Toggle chat panel"
+          onClick={() => setChatOpen((o) => !o)}
+        >
+          💬
+        </button>
+      </header>
+
+      <div className="app-body">
+        {leftOpen && (
+          <aside className="sidebar">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                className={`nav-item ${tab === t.id ? "active" : ""}`}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+            <div className="status">
+              <div>
+                <span className={`dot ${online ? "ok" : "off"}`} />
+                {online ? "Backend online" : "Backend offline"}
+              </div>
+              {health && (
+                <div className="small" style={{ marginTop: 6 }}>
+                  model: {health.default_provider}
+                  <br />
+                  vault: {health.vault_exists ? "ok" : "missing"}
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+
+        <main className="main">
+          {tab === "notes" && (
+            <NotesPage path={notePath} onOpen={openNote} tocOpen={tocOpen} />
+          )}
+          {tab === "graph" && <GraphPage onOpen={openNote} />}
+          {tab === "search" && <SearchPage />}
+          {tab === "generate" && <GeneratePage />}
+          {tab === "quiz" && <QuizPage />}
+          {tab === "progress" && <ProgressPage />}
+          {tab === "plan" && <PlanPage />}
+          {tab === "papers" && <PastPapersPage />}
+          {tab === "library" && <LibraryPage />}
+        </main>
+
+        {chatOpen && (
+          <aside className="chat-dock">
+            <ChatPage />
+          </aside>
+        )}
+      </div>
     </div>
   );
 }

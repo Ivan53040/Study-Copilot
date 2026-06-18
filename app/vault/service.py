@@ -18,9 +18,11 @@ import frontmatter
 from app.config.settings import Settings, get_settings
 from app.logging_config import get_logger
 from app.security.paths import (
+    PathSecurityError,
     assert_workspace_readable,
     assert_workspace_writable,
     is_denied,
+    is_in_vault,
 )
 
 logger = get_logger("vault")
@@ -85,31 +87,49 @@ def extract_links(text: str) -> list[str]:
 
 
 def list_tree(settings: Settings | None = None) -> dict:
-    """Nested folder/file tree of notes under the vault root."""
+    """Nested folder/file tree of the vault (includes empty folders)."""
     settings = settings or get_settings()
+    root_path = _vault_root(settings)
     root: dict = {"name": "", "path": "", "type": "folder", "children": {}}
 
-    for _, rel in _iter_notes(settings):
-        parts = rel.split("/")
+    def ensure_folder(rel: str) -> dict:
         node = root
-        for part in parts[:-1]:
+        if not rel:
+            return node
+        acc: list[str] = []
+        for part in rel.split("/"):
+            acc.append(part)
             child = node["children"].get(part)
             if child is None:
                 child = {
                     "name": part,
-                    "path": "/".join(
-                        rel.split("/")[: parts.index(part) + 1]
-                    ),
+                    "path": "/".join(acc),
                     "type": "folder",
                     "children": {},
                 }
                 node["children"][part] = child
             node = child
-        node["children"][parts[-1]] = {
-            "name": parts[-1],
-            "path": rel,
-            "type": "file",
-        }
+        return node
+
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not d.startswith(".") and not is_denied(Path(dirpath) / d, settings)
+        ]
+        rel_dir = Path(dirpath).relative_to(root_path).as_posix()
+        rel_dir = "" if rel_dir == "." else rel_dir
+        folder = ensure_folder(rel_dir)
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            p = Path(dirpath) / name
+            if p.suffix.lower() in NOTE_EXTS and not is_denied(p, settings):
+                folder["children"][name] = {
+                    "name": name,
+                    "path": p.relative_to(root_path).as_posix(),
+                    "type": "file",
+                }
 
     def to_list(node: dict) -> dict:
         children = node["children"].values()
@@ -207,6 +227,17 @@ def write_note(
     abs_path.write_text(content, encoding="utf-8")
     logger.info("Edited note %s (backup=%s)", relpath, bool(backup_path))
     return {"path": relpath, "written": True, "backup": backup_path}
+
+
+def create_folder(relpath: str, settings: Settings | None = None) -> dict:
+    settings = settings or get_settings()
+    if not settings.workspace.allow_edit:
+        raise PathSecurityError("Editing is disabled.")
+    p = (_vault_root(settings) / relpath).expanduser().resolve()
+    if not is_in_vault(p, settings):
+        raise PathSecurityError(f"Folder not allowed: {relpath}")
+    p.mkdir(parents=True, exist_ok=True)
+    return {"path": relpath, "created": True}
 
 
 def build_graph(settings: Settings | None = None) -> dict:

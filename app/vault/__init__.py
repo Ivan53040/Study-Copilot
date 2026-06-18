@@ -2,6 +2,7 @@
 
 from app.vault.service import (
     build_graph,
+    create_folder,
     list_tree,
     read_note,
     search_notes,
@@ -10,6 +11,7 @@ from app.vault.service import (
 
 __all__ = [
     "build_graph",
+    "create_folder",
     "list_tree",
     "read_note",
     "search_notes",

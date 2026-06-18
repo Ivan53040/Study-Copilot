@@ -7,6 +7,7 @@ import pytest
 from app.security.paths import PathSecurityError
 from app.vault.service import (
     build_graph,
+    create_folder,
     extract_headings,
     extract_links,
     list_tree,
@@ -108,3 +109,25 @@ def test_write_blocked_when_edit_disabled(vault):
 def test_search_notes(vault):
     results = {r["path"] for r in search_notes("a.md", vault)}
     assert "A.md" in results
+
+
+def test_create_folder_shows_in_tree(vault):
+    create_folder("New Folder", vault)
+    tree = list_tree(vault)
+    folders = _all_folders(tree)
+    assert "New Folder" in folders
+
+
+def _all_folders(node) -> list[str]:
+    out = []
+    for c in node["children"]:
+        if c["type"] == "folder":
+            out.append(c["path"])
+            out.extend(_all_folders(c))
+    return out
+
+
+def test_create_folder_blocked_when_edit_disabled(vault):
+    vault.workspace.allow_edit = False
+    with pytest.raises(PathSecurityError):
+        create_folder("Nope", vault)

@@ -148,5 +148,11 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ path, content }) },
     ),
 
+  vaultCreateFolder: (path: string) =>
+    request<{ path: string; created: boolean }>("/vault/folder", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+
   vaultGraph: () => request<VaultGraph>("/vault/graph"),
 };

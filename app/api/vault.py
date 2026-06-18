@@ -9,6 +9,7 @@ from app.config.settings import Settings, get_settings
 from app.security.paths import PathSecurityError
 from app.vault.service import (
     build_graph,
+    create_folder,
     list_tree,
     read_note,
     search_notes,
@@ -21,6 +22,10 @@ router = APIRouter(prefix="/vault", tags=["vault"])
 class NoteWrite(BaseModel):
     path: str
     content: str
+
+
+class FolderCreate(BaseModel):
+    path: str
 
 
 @router.get("/tree")
@@ -44,6 +49,16 @@ def get_note(
 def put_note(req: NoteWrite, settings: Settings = Depends(get_settings)) -> dict:
     try:
         return write_note(req.path, req.content, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/folder")
+def post_folder(
+    req: FolderCreate, settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return create_folder(req.path, settings)
     except PathSecurityError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
