@@ -154,15 +154,6 @@ export function App() {
         >
           <Icon name="menu" size={17} />
         </button>
-        <span className="brand">
-          Study<span style={{ color: "var(--accent)" }}>Copilot</span>
-        </span>
-        <span className="crumb muted">{title}</span>
-
-        <div className="grow" />
-
-        <QuickOpen onOpen={openNote} />
-
         {isNotes && (
           <button
             className={`icon-btn ${treeOpen ? "active" : ""}`}
@@ -172,6 +163,15 @@ export function App() {
             <Icon name="panel-left" size={17} />
           </button>
         )}
+        <span className="brand">
+          Study<span style={{ color: "var(--accent)" }}>Copilot</span>
+        </span>
+        <span className="crumb muted">{title}</span>
+
+        <div className="grow" />
+
+        <QuickOpen onOpen={openNote} />
+
         {isNotes && (
           <button
             className={`icon-btn ${tocOpen ? "active" : ""}`}
@@ -191,8 +191,9 @@ export function App() {
       </header>
 
       <div className="app-body">
-        {leftOpen && (
-          <aside className="sidebar">
+        <aside className={`sidebar ${leftOpen ? "open" : ""}`}>
+          {leftOpen && (
+            <>
             {TABS.map((t) => (
               <button
                 key={t.id}
@@ -216,17 +217,13 @@ export function App() {
                 </div>
               )}
             </div>
-          </aside>
-        )}
+            </>
+          )}
+        </aside>
 
         <main className="main">
           {tab === "notes" && (
-            <NotesPage
-              path={notePath}
-              onOpen={openNote}
-              tocOpen={tocOpen}
-              treeOpen={treeOpen}
-            />
+            <NotesPage path={notePath} tocOpen={tocOpen} treeOpen={treeOpen} />
           )}
           {tab === "graph" && <GraphPage onOpen={openNote} />}
           {tab === "search" && <SearchPage />}
@@ -238,11 +235,9 @@ export function App() {
           {tab === "library" && <LibraryPage />}
         </main>
 
-        {chatOpen && (
-          <aside className="chat-dock">
-            <ChatPage />
-          </aside>
-        )}
+        <aside className={`chat-dock ${chatOpen ? "open" : ""}`}>
+          {chatOpen && <ChatPage />}
+        </aside>
       </div>
     </div>
   );

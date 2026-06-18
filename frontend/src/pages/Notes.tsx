@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { api } from "../api";
@@ -7,6 +7,9 @@ import type { TreeNode, VaultNote } from "../types";
 
 const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const stripExt = (name: string) => name.replace(/\.(md|markdown|txt)$/i, "");
+const basename = (p: string) => p.split("/").pop() ?? p;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 function stripFrontmatter(raw: string): string {
   if (raw.startsWith("---")) {
@@ -34,8 +37,6 @@ function toText(children: React.ReactNode): string {
     return toText((children as any).props.children);
   return "";
 }
-
-const stripExt = (name: string) => name.replace(/\.(md|markdown|txt)$/i, "");
 
 function collectFolders(node: TreeNode, acc: string[] = []): string[] {
   node.children?.forEach((c) => {
@@ -71,7 +72,7 @@ interface NodeProps {
   expanded: Set<string>;
   sortDir: "asc" | "desc";
   onToggle: (p: string) => void;
-  onOpen: (p: string) => void;
+  onOpen: (p: string, newTab: boolean) => void;
   activeRef: React.RefObject<HTMLDivElement>;
 }
 
@@ -86,7 +87,7 @@ function TreeNodeView(props: NodeProps) {
         ref={active ? activeRef : undefined}
         className={`tree-row ${active ? "active" : ""}`}
         style={{ paddingLeft: 6 + depth * 12 }}
-        onClick={() => onOpen(node.path)}
+        onClick={(e) => onOpen(node.path, e.ctrlKey || e.metaKey)}
         title={node.path}
       >
         {stripExt(node.name)}
@@ -122,16 +123,16 @@ function TreeNodeView(props: NodeProps) {
 
 export function NotesPage({
   path,
-  onOpen,
   tocOpen,
   treeOpen,
 }: {
   path: string | null;
-  onOpen: (path: string) => void;
   tocOpen: boolean;
   treeOpen: boolean;
 }) {
   const [tree, setTree] = useState<TreeNode | null>(null);
+  const [tabs, setTabs] = useState<string[]>([]);
+  const [active, setActive] = useState<string | null>(null);
   const [note, setNote] = useState<VaultNote | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -139,39 +140,83 @@ export function NotesPage({
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const activeRef = useRef<HTMLDivElement>(null);
+  const [treeWidth, setTreeWidth] = useState(
+    () => Number(localStorage.getItem("ws.treeWidth")) || 240,
+  );
+  const [tocWidth, setTocWidth] = useState(
+    () => Number(localStorage.getItem("ws.tocWidth")) || 240,
+  );
+  const activeRef = useRef<string | null>(null);
+  const activeRowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+  useEffect(() => localStorage.setItem("ws.treeWidth", String(treeWidth)), [treeWidth]);
+  useEffect(() => localStorage.setItem("ws.tocWidth", String(tocWidth)), [tocWidth]);
 
   const refreshTree = () => api.vaultTree().then(setTree);
+
+  const openInTab = useCallback((p: string, newTab: boolean) => {
+    setTabs((prev) => {
+      if (prev.includes(p)) return prev;
+      if (newTab || !activeRef.current) return [...prev, p];
+      return prev.map((x) => (x === activeRef.current ? p : x));
+    });
+    setActive(p);
+  }, []);
+
+  const closeTab = useCallback((p: string) => {
+    setTabs((prev) => {
+      const idx = prev.indexOf(p);
+      const next = prev.filter((x) => x !== p);
+      if (activeRef.current === p) {
+        const fallback = next[idx] ?? next[idx - 1] ?? next[next.length - 1] ?? null;
+        setActive(fallback);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     api
       .vaultTree()
       .then((t) => {
         setTree(t);
-        // Expand top-level folders by default.
         setExpanded(
-          new Set((t.children ?? []).filter((c) => c.type === "folder").map((c) => c.path)),
+          new Set(
+            (t.children ?? []).filter((c) => c.type === "folder").map((c) => c.path),
+          ),
         );
       })
       .catch((e) => setError((e as Error).message));
   }, []);
 
+  // External open request (graph / quick-open) -> open in a tab.
   useEffect(() => {
-    if (!path) return;
+    if (path) openInTab(path, true);
+  }, [path, openInTab]);
+
+  // Load the active note.
+  useEffect(() => {
+    if (!active) {
+      setNote(null);
+      return;
+    }
     setEditing(false);
     setError(null);
-    setExpanded((prev) => new Set([...prev, ...ancestorsOf(path)]));
+    setExpanded((prev) => new Set([...prev, ...ancestorsOf(active)]));
     api
-      .vaultNote(path)
+      .vaultNote(active)
       .then((n) => {
         setNote(n);
         setDraft(n.content);
       })
       .catch((e) => setError((e as Error).message));
-  }, [path]);
+  }, [active]);
 
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: "nearest" });
+    activeRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [note]);
 
   const linkMap = useMemo(() => {
@@ -191,7 +236,7 @@ export function NotesPage({
           return (
             <span
               className={`wikilink ${target ? "" : "missing"}`}
-              onClick={() => target && onOpen(target)}
+              onClick={(e) => target && openInTab(target, e.ctrlKey || e.metaKey)}
             >
               {children}
             </span>
@@ -210,7 +255,7 @@ export function NotesPage({
       h5: heading("h5"),
       h6: heading("h6"),
     };
-  }, [linkMap, onOpen]);
+  }, [linkMap, openInTab]);
 
   const rendered = useMemo(
     () => (note ? wikilinksToMd(stripFrontmatter(note.content)) : ""),
@@ -230,10 +275,10 @@ export function NotesPage({
     let p = name.trim();
     if (!/\.(md|markdown|txt)$/i.test(p)) p += ".md";
     try {
-      await api.vaultSaveNote(p, `# ${stripExt(p.split("/").pop()!)}\n\n`);
+      await api.vaultSaveNote(p, `# ${stripExt(basename(p))}\n\n`);
       await refreshTree();
       setExpanded((prev) => new Set([...prev, ...ancestorsOf(p)]));
-      onOpen(p);
+      openInTab(p, true);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -252,12 +297,9 @@ export function NotesPage({
   };
 
   const reveal = () => {
-    if (note) {
-      setExpanded((prev) => new Set([...prev, ...ancestorsOf(note.path)]));
-      setTimeout(
-        () => activeRef.current?.scrollIntoView({ block: "center" }),
-        50,
-      );
+    if (active) {
+      setExpanded((prev) => new Set([...prev, ...ancestorsOf(active)]));
+      setTimeout(() => activeRowRef.current?.scrollIntoView({ block: "center" }), 50);
     }
   };
 
@@ -265,6 +307,28 @@ export function NotesPage({
   const allExpanded = expanded.size >= allFolders.length && allFolders.length > 0;
   const toggleExpandAll = () =>
     setExpanded(allExpanded ? new Set() : new Set(allFolders));
+
+  const startResize = (e: React.MouseEvent, side: "tree" | "toc") => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startTree = treeWidth;
+    const startToc = tocWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      if (side === "tree") setTreeWidth(clamp(startTree + dx, 160, 520));
+      else setTocWidth(clamp(startToc - dx, 150, 480));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
 
   const save = async () => {
     if (!note) return;
@@ -283,10 +347,12 @@ export function NotesPage({
     }
   };
 
+  const showToc = tocOpen && !!note;
+
   return (
     <div className="workspace">
-      {treeOpen && (
-        <div className="ws-tree">
+      <div className="ws-tree" style={{ width: treeOpen ? treeWidth : 0 }}>
+        <div className="ws-tree-inner" style={{ width: treeWidth }}>
           <div className="tree-toolbar">
             <button className="icon-btn" title="New note" onClick={newNote}>
               <Icon name="file-plus" />
@@ -316,62 +382,102 @@ export function NotesPage({
             <TreeNodeView
               node={tree}
               depth={0}
-              current={note?.path ?? null}
+              current={active}
               expanded={expanded}
               sortDir={sortDir}
               onToggle={toggleFolder}
-              onOpen={onOpen}
-              activeRef={activeRef}
+              onOpen={openInTab}
+              activeRef={activeRowRef}
             />
           ) : (
             <div className="muted small">Loading…</div>
           )}
         </div>
+      </div>
+      {treeOpen && (
+        <div className="resizer" onMouseDown={(e) => startResize(e, "tree")} />
       )}
 
       <div className="ws-main">
-        {error && <div className="warn-banner">{error}</div>}
-        {!note ? (
-          <div className="muted">Select a note from the tree.</div>
-        ) : (
-          <>
-            <div className="row" style={{ marginBottom: 10, alignItems: "center" }}>
-              <h2 className="page-title" style={{ margin: 0 }}>{note.name}</h2>
-              <div className="grow" />
-              {note.editable &&
-                (editing ? (
-                  <>
-                    <button className="primary" onClick={save} disabled={saving}>
-                      {saving ? "Saving…" : "Save"}
-                    </button>
-                    <button onClick={() => { setEditing(false); setDraft(note.content); }}>
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button onClick={() => setEditing(true)}>Edit</button>
-                ))}
-            </div>
-            <div className="small muted" style={{ marginBottom: 12 }}>{note.path}</div>
-
-            {editing ? (
-              <textarea
-                className="editor"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-              />
-            ) : (
-              <div className="md">
-                <ReactMarkdown components={components}>{rendered}</ReactMarkdown>
+        {tabs.length > 0 && (
+          <div className="tabbar">
+            {tabs.map((p) => (
+              <div
+                key={p}
+                className={`tab ${p === active ? "active" : ""}`}
+                onClick={() => setActive(p)}
+                onMouseDown={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    closeTab(p);
+                  }
+                }}
+                title={p}
+              >
+                <span className="tab-label">{stripExt(basename(p))}</span>
+                <span
+                  className="tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(p);
+                  }}
+                >
+                  ✕
+                </span>
               </div>
-            )}
-          </>
+            ))}
+            <button className="tab-add icon-btn" title="New note" onClick={newNote}>
+              +
+            </button>
+          </div>
         )}
+
+        <div className="ws-content">
+          {error && <div className="warn-banner">{error}</div>}
+          {!note ? (
+            <div className="muted">Select a note from the tree.</div>
+          ) : (
+            <>
+              <div className="row" style={{ marginBottom: 10, alignItems: "center" }}>
+                <h2 className="page-title" style={{ margin: 0 }}>{note.name}</h2>
+                <div className="grow" />
+                {note.editable &&
+                  (editing ? (
+                    <>
+                      <button className="primary" onClick={save} disabled={saving}>
+                        {saving ? "Saving…" : "Save"}
+                      </button>
+                      <button onClick={() => { setEditing(false); setDraft(note.content); }}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => setEditing(true)}>Edit</button>
+                  ))}
+              </div>
+              <div className="small muted" style={{ marginBottom: 12 }}>{note.path}</div>
+              {editing ? (
+                <textarea
+                  className="editor"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                />
+              ) : (
+                <div className="md">
+                  <ReactMarkdown components={components}>{rendered}</ReactMarkdown>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
-      {tocOpen && note && (note.headings.length > 0 || note.backlinks.length > 0) && (
-        <div className="ws-toc">
-          {note.headings.length > 0 && (
+      {showToc && (
+        <div className="resizer" onMouseDown={(e) => startResize(e, "toc")} />
+      )}
+      <div className="ws-toc" style={{ width: showToc ? tocWidth : 0 }}>
+        <div className="ws-toc-inner" style={{ width: tocWidth }}>
+          {note && note.headings.length > 0 && (
             <>
               <div className="small muted" style={{ marginBottom: 6 }}>On this page</div>
               {note.headings.map((h, i) => (
@@ -386,20 +492,24 @@ export function NotesPage({
               ))}
             </>
           )}
-          {note.backlinks.length > 0 && (
+          {note && note.backlinks.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <div className="small muted" style={{ marginBottom: 6 }}>
                 Linked mentions ({note.backlinks.length})
               </div>
               {note.backlinks.map((b) => (
-                <div key={b.path} className="toc-item" onClick={() => onOpen(b.path)}>
+                <div
+                  key={b.path}
+                  className="toc-item"
+                  onClick={(e) => openInTab(b.path, e.ctrlKey || e.metaKey)}
+                >
                   {b.title}
                 </div>
               ))}
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
