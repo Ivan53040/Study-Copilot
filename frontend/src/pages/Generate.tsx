@@ -1,5 +1,6 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "../api";
 import type { NotePreview } from "../types";
 import { Warnings } from "../components";
@@ -109,7 +110,7 @@ export function GeneratePage() {
                 {preview.title} → <code>{preview.target_path}</code>
               </div>
               <div className="md">
-                <ReactMarkdown>{preview.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview.content}</ReactMarkdown>
               </div>
             </div>
           ) : (

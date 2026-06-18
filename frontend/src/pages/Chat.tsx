@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "../api";
 import type { Citation } from "../types";
 import { CitationLine, Warnings } from "../components";
@@ -88,7 +89,7 @@ export function ChatPage() {
           {turns.map((t, i) => (
             <div key={i} className={`msg ${t.role}`}>
               <div className="md">
-                <ReactMarkdown>{t.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.content}</ReactMarkdown>
               </div>
               {t.citations && t.citations.length > 0 && (
                 <div className="citations">

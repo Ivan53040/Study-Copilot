@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "../api";
 import { Icon } from "../icons";
 import type { TreeNode, VaultNote } from "../types";
@@ -665,7 +666,9 @@ export function NotesPage({
                 />
               ) : (
                 <div className="md">
-                  <ReactMarkdown components={components}>{rendered}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+                    {rendered}
+                  </ReactMarkdown>
                 </div>
               )}
             </>
