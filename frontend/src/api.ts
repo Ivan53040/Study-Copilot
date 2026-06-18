@@ -155,4 +155,9 @@ export const api = {
     }),
 
   vaultGraph: () => request<VaultGraph>("/vault/graph"),
+
+  vaultSearch: (q: string) =>
+    request<{ results: { path: string; title: string }[] }>(
+      `/vault/search?q=${encodeURIComponent(q)}`,
+    ),
 };

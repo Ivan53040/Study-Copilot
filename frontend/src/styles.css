@@ -127,9 +127,64 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   font-size: 12px;
   padding: 0 4px;
 }
+.crumb {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40vw;
+}
+
+/* Quick-open switcher in the top bar */
+.quickopen {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  color: var(--muted);
+  width: 240px;
+}
+.quickopen input {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  width: 100%;
+  outline: none;
+}
+.quickopen-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 40;
+  padding: 4px;
+}
+.quickopen-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.quickopen-item:hover { background: var(--panel-2); }
+
 @media (max-width: 1000px) {
   .nav-label { display: none; }
   .topstatus .status-text { display: none; }
+  .crumb { display: none; }
+  .quickopen { width: 150px; }
+}
+@media (max-width: 680px) {
+  .quickopen { display: none; }
 }
 
 .app { display: flex; min-height: 100vh; }
@@ -170,13 +225,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .brand { font-weight: 700; font-size: 16px; padding: 6px 10px 14px; }
 .brand span { color: var(--accent); }
 .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   text-align: left;
   background: transparent;
   border: none;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   color: var(--muted);
 }
+.nav-item svg { flex-shrink: 0; }
 .nav-item:hover { background: var(--panel-2); color: var(--text); }
 .nav-item.active { background: var(--panel-2); color: var(--text); border-left: 3px solid var(--accent); }
 .sidebar .status { margin-top: auto; font-size: 12px; color: var(--muted); padding: 8px 10px; }
