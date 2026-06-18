@@ -1,4 +1,5 @@
-use std::process::{Child, Command};
+use std::fs::File;
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::Manager;
 
@@ -14,14 +15,27 @@ const PROJECT_DIR: &str = r"C:\Users\ivank\Desktop\Sideproject\Study Copilot";
 #[cfg(not(debug_assertions))]
 fn spawn_backend() -> Option<Child> {
     let python = format!(r"{PROJECT_DIR}\.venv\Scripts\pythonw.exe");
-    Command::new(python)
-        .args([
-            "-m", "uvicorn", "app.main:app",
-            "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning",
-        ])
-        .current_dir(PROJECT_DIR)
-        .spawn()
-        .ok()
+    let mut cmd = Command::new(python);
+    cmd.args([
+        "-m", "uvicorn", "app.main:app",
+        "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning",
+    ])
+    .current_dir(PROJECT_DIR)
+    .stdin(Stdio::null());
+
+    // A detached GUI launch has no valid stdio; if the child inherits those
+    // handles its logging crashes. Redirect to a log file (or null) instead.
+    match File::create(format!(r"{PROJECT_DIR}\data\desktop-backend.log")) {
+        Ok(f) => {
+            let err = f.try_clone().ok();
+            cmd.stdout(Stdio::from(f));
+            cmd.stderr(err.map(Stdio::from).unwrap_or_else(Stdio::null));
+        }
+        Err(_) => {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
+    cmd.spawn().ok()
 }
 
 #[cfg(debug_assertions)]
