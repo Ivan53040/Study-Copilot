@@ -163,6 +163,43 @@ export interface AnalyzeReport {
   warnings: string[];
 }
 
+export interface TreeNode {
+  name: string;
+  path: string;
+  type: "folder" | "file";
+  children?: TreeNode[];
+}
+
+export interface NoteHeading {
+  level: number;
+  text: string;
+  slug: string;
+}
+
+export interface VaultNote {
+  path: string;
+  name: string;
+  content: string;
+  frontmatter: Record<string, unknown>;
+  headings: NoteHeading[];
+  links: { name: string; path: string | null }[];
+  backlinks: { path: string; title: string }[];
+  editable: boolean;
+}
+
+export interface GraphNode {
+  id: string;
+  title: string;
+  folder: string;
+  degree: number;
+}
+
+export interface VaultGraph {
+  nodes: GraphNode[];
+  edges: { source: string; target: string }[];
+  stats: { notes: number; links: number };
+}
+
 export interface Health {
   status: string;
   version: string;

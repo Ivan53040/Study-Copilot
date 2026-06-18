@@ -123,3 +123,46 @@ def assert_writable(path: str | Path, settings: Settings) -> Path:
 def resolve_under_vault(relative: str | Path, settings: Settings) -> Path:
     """Resolve a vault-relative path to an absolute path under the vault root."""
     return _resolve(_resolve(settings.vault.root) / relative)
+
+
+# --- Standalone note-workspace permissions (browse/edit the whole vault) ---
+#
+# The RAG read/write helpers above stay narrow (read_paths / StudyCopilot only).
+# The workspace lets the user browse the WHOLE vault and edit text notes, while
+# still refusing denied paths and anything outside the vault root.
+
+def is_in_vault(path: str | Path, settings: Settings) -> bool:
+    p = _resolve(path)
+    if is_denied(p, settings):
+        return False
+    return _is_relative_to(p, _resolve(settings.vault.root))
+
+
+def is_workspace_readable(path: str | Path, settings: Settings) -> bool:
+    return is_in_vault(path, settings)
+
+
+def is_workspace_writable(path: str | Path, settings: Settings) -> bool:
+    if not settings.workspace.allow_edit:
+        return False
+    p = _resolve(path)
+    if not is_in_vault(p, settings):
+        return False
+    return p.suffix.lower() in set(settings.workspace.editable_extensions)
+
+
+def assert_workspace_readable(path: str | Path, settings: Settings) -> Path:
+    p = _resolve(path)
+    if not is_workspace_readable(p, settings):
+        raise PathSecurityError(f"Note not readable: {p}")
+    return p
+
+
+def assert_workspace_writable(path: str | Path, settings: Settings) -> Path:
+    p = _resolve(path)
+    if not is_workspace_writable(p, settings):
+        raise PathSecurityError(
+            f"Note not editable: {p}. Editing is limited to text notes inside "
+            f"the vault (and never .obsidian/.git/.env/.trash)."
+        )
+    return p

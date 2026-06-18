@@ -19,6 +19,7 @@ from app.api import (
     quizzes,
     search,
     sync,
+    vault,
 )
 from app.config.settings import get_settings
 from app.database.db import init_db
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(quizzes.router)
     app.include_router(plans.router)
     app.include_router(exams.router)
+    app.include_router(vault.router)
     app.include_router(sync.router)
     return app
 

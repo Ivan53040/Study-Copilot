@@ -92,8 +92,9 @@ python -m app.main          # http://127.0.0.1:8000  (docs at /docs)
 
 ### Frontend (React + Vite)
 
-A single-page app in [`frontend/`](frontend/) with Chat, Search, Generate-Notes,
-Quiz, Progress, Daily Plan, Past Papers and Library views. It calls the API
+A single-page app in [`frontend/`](frontend/) — a standalone note workspace
+(Notes browser/editor + Graph view) plus the study tools (Chat, Search,
+Generate, Quiz, Progress, Daily Plan, Past Papers, Library). It calls the API
 through a dev proxy (`/api` → `:8000`).
 
 ```bash
@@ -136,6 +137,10 @@ Endpoints live so far:
 - `POST /past-papers/analyze` — extract past-paper questions + exam frequency
 - `GET  /past-papers/{course}` — extracted questions
 - `POST /exams/generate` — generate an exam-style (long-answer) mock exam
+- `GET  /vault/tree` — full note tree of the vault
+- `GET  /vault/note?path=` — note content, TOC headings, links, backlinks
+- `PUT  /vault/note` — edit/save a text note (safe + backed up)
+- `GET  /vault/graph` — note link graph (nodes + edges)
 - `GET  /sync/status` — background sync state
 - `POST /sync/run` — trigger a sync (`?dry_run=true` to preview)
 
@@ -178,6 +183,22 @@ frontmatter** (`source_type: ai-generated`, `reviewed_by_user: false`,
 - **Writes are confined to `StudyCopilot/Generated Notes/`** — the same
   path-security layer that protects your source notes; attempts elsewhere 403.
 - Saved notes sync to iCloud automatically via the two-way sync.
+
+### Standalone note workspace (Phase 9)
+
+The app doubles as an Obsidian-style workspace over the **whole vault**:
+
+- **Notes** — a folder tree, rendered Markdown with clickable `[[wikilinks]]`,
+  a table-of-contents outline, and "linked mentions" (backlinks).
+- **Editing** — edit and save any text note in place. Edits are still refused
+  for denied paths (`.obsidian`/`.git`/`.env`/`.trash`) and outside the vault,
+  and the previous version is backed up to `StudyCopilot/_backups/` first, so
+  every change is reversible.
+- **Graph** — an interactive force-directed graph of notes linked by wikilinks;
+  click a node to open it.
+
+Backed by `app/vault/` (filesystem-direct, independent of the RAG index) and the
+`/vault/*` endpoints.
 
 ### Grounded chat (Phase 3)
 
@@ -254,10 +275,11 @@ app/
   generation/   revision notes, quizzes + marking, plans/reports
   learning/     concepts, confidence, spaced repetition, planner, events
   exams/        past-paper extraction + exam-frequency estimation
+  vault/        standalone note workspace: tree, read, edit, link graph
   obsidian/     templates, links, path-safe note writer
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
   api/          routers (health, ingest, courses, search, chat, notes,
-                quizzes, plans, exams, sync)
+                quizzes, plans, exams, vault, sync)
 scripts/        CLI entrypoints (ingest, embed, sync, evaluate)
 evals/          evaluation harness + seed dataset + report
 tests/          pytest suite

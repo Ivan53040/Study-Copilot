@@ -11,6 +11,9 @@ import type {
   QuizResult,
   SearchResponse,
   SubmitResult,
+  TreeNode,
+  VaultGraph,
+  VaultNote,
 } from "./types";
 
 // Calls go through the Vite proxy (/api -> backend). Override with VITE_API_BASE.
@@ -133,4 +136,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  vaultTree: () => request<TreeNode>("/vault/tree"),
+
+  vaultNote: (path: string) =>
+    request<VaultNote>(`/vault/note?path=${encodeURIComponent(path)}`),
+
+  vaultSaveNote: (path: string, content: string) =>
+    request<{ path: string; written: boolean; backup: string | null }>(
+      "/vault/note",
+      { method: "PUT", body: JSON.stringify({ path, content }) },
+    ),
+
+  vaultGraph: () => request<VaultGraph>("/vault/graph"),
 };

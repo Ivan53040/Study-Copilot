@@ -3,7 +3,9 @@ import { api } from "./api";
 import type { Health } from "./types";
 import { ChatPage } from "./pages/Chat";
 import { SearchPage } from "./pages/Search";
+import { GeneratePage } from "./pages/Generate";
 import { NotesPage } from "./pages/Notes";
+import { GraphPage } from "./pages/Graph";
 import { LibraryPage } from "./pages/Library";
 import { QuizPage } from "./pages/Quiz";
 import { ProgressPage } from "./pages/Progress";
@@ -11,9 +13,11 @@ import { PlanPage } from "./pages/Plan";
 import { PastPapersPage } from "./pages/PastPapers";
 
 type Tab =
+  | "notes"
+  | "graph"
   | "chat"
   | "search"
-  | "notes"
+  | "generate"
   | "quiz"
   | "progress"
   | "plan"
@@ -21,9 +25,11 @@ type Tab =
   | "library";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "notes", label: "📒  Notes" },
+  { id: "graph", label: "🕸️  Graph" },
   { id: "chat", label: "💬  Chat" },
   { id: "search", label: "🔍  Search" },
-  { id: "notes", label: "📝  Generate Notes" },
+  { id: "generate", label: "✍️  Generate" },
   { id: "quiz", label: "🧠  Quiz" },
   { id: "progress", label: "📈  Progress" },
   { id: "plan", label: "🗓️  Daily Plan" },
@@ -32,9 +38,15 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("chat");
+  const [tab, setTab] = useState<Tab>("notes");
+  const [notePath, setNotePath] = useState<string | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [online, setOnline] = useState<boolean>(false);
+
+  const openNote = (path: string) => {
+    setNotePath(path);
+    setTab("notes");
+  };
 
   useEffect(() => {
     let alive = true;
@@ -87,9 +99,11 @@ export function App() {
       </aside>
 
       <main className="main">
+        {tab === "notes" && <NotesPage path={notePath} onOpen={openNote} />}
+        {tab === "graph" && <GraphPage onOpen={openNote} />}
         {tab === "chat" && <ChatPage />}
         {tab === "search" && <SearchPage />}
-        {tab === "notes" && <NotesPage />}
+        {tab === "generate" && <GeneratePage />}
         {tab === "quiz" && <QuizPage />}
         {tab === "progress" && <ProgressPage />}
         {tab === "plan" && <PlanPage />}

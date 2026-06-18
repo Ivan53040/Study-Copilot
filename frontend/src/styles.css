@@ -126,6 +126,28 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; }
 
+/* Notes workspace */
+.workspace { display: flex; gap: 14px; height: calc(100vh - 60px); }
+.ws-tree { width: 240px; min-width: 240px; overflow-y: auto; border-right: 1px solid var(--border); padding-right: 8px; }
+.ws-main { flex: 1; overflow-y: auto; min-width: 0; }
+.ws-toc { width: 210px; min-width: 210px; overflow-y: auto; border-left: 1px solid var(--border); padding-left: 12px; }
+.tree-row { padding: 3px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--muted); }
+.tree-row:hover { background: var(--panel-2); color: var(--text); }
+.tree-row.active { background: var(--panel-2); color: var(--accent); }
+.tree-folder { color: var(--text); font-weight: 600; }
+.toc-item { display: block; padding: 2px 0; color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: none; }
+.toc-item:hover { color: var(--accent); }
+.wikilink { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px solid transparent; }
+.wikilink:hover { border-bottom-color: var(--accent); }
+.wikilink.missing { color: var(--danger); opacity: 0.7; }
+.md h1, .md h2, .md h3 { scroll-margin-top: 12px; }
+.md h1 { font-size: 22px; } .md h2 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.md h3 { font-size: 15px; }
+.md a { color: var(--accent); }
+.md ul { padding-left: 20px; }
+.md blockquote { border-left: 3px solid var(--border); margin: 8px 0; padding: 2px 12px; color: var(--muted); }
+.editor { width: 100%; height: calc(100vh - 160px); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; line-height: 1.5; }
+
 .preview { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-top: 14px; }
 .preview .md h2 { font-size: 16px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
 .spinner { color: var(--muted); }

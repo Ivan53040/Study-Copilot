@@ -76,6 +76,16 @@ class GenerationConfig(BaseModel):
     require_citations: bool = True
 
 
+class WorkspaceConfig(BaseModel):
+    """Standalone note-workspace settings (browse/edit the whole vault)."""
+
+    allow_edit: bool = True
+    backup_on_edit: bool = True
+    editable_extensions: list[str] = Field(
+        default_factory=lambda: [".md", ".markdown", ".txt"]
+    )
+
+
 class SyncConfig(BaseModel):
     """One-way sync from the local working vault to iCloud.
 
@@ -107,6 +117,7 @@ class Settings(BaseModel):
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
     database_url: str = "sqlite:///./data/study_copilot.db"
 
