@@ -54,10 +54,14 @@ def create_app() -> FastAPI:
         description="Local-first AI study assistant over an Obsidian vault.",
         lifespan=lifespan,
     )
-    # Local-first app: allow the Vite dev server (and any localhost) to call us.
+    # Local-first app: allow the Vite dev server (localhost/127.0.0.1, any port)
+    # AND the packaged Tauri webview, whose origin is tauri://localhost /
+    # http(s)://tauri.localhost.
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+        allow_origin_regex=(
+            r"^(tauri://localhost|https?://(localhost|127\.0\.0\.1|tauri\.localhost)(:\d+)?)$"
+        ),
         allow_methods=["*"],
         allow_headers=["*"],
     )
