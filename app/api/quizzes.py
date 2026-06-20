@@ -16,14 +16,16 @@ router = APIRouter(tags=["quizzes"])
 
 class QuizRequest(BaseModel):
     course: str | None = None
+    scope_path: str | None = None
+    scope_name: str | None = None
     week: int | None = None
     topic: str | None = None
     num_questions: int = 5
 
     @model_validator(mode="after")
     def _scope(self):
-        if not (self.course or self.topic):
-            raise ValueError("Provide at least a course or a topic.")
+        if not (self.course or self.scope_path or self.topic):
+            raise ValueError("Provide at least a vault scope or a topic.")
         return self
 
 
@@ -42,6 +44,8 @@ def post_generate(
 ) -> dict:
     result = generate_quiz(
         course=req.course,
+        scope_path=req.scope_path,
+        scope_name=req.scope_name,
         week=req.week,
         topic=req.topic,
         num_questions=req.num_questions,

@@ -10,6 +10,7 @@ from app.agent.validation import validate_answer
 from app.ingestion.service import ingest
 from app.models.chat import EchoChatAdapter
 from app.retrieval.indexing import index_embeddings
+from app.retrieval.service import SearchResponse
 from app.retrieval.types import SearchHit
 
 
@@ -127,3 +128,29 @@ def test_agent_no_sources_declines(settings, db):
         adapter=EchoChatAdapter(),
     )
     assert res.answer == "I don't have that in your materials."
+
+
+def test_scoped_agent_also_searches_lecture_materials(settings, db, monkeypatch):
+    lecture_root = settings.vault.root / "Lecture Materials"
+    lecture_root.mkdir()
+    lecture_hit = _hit(99, content="Affordances provide clues about interaction.")
+    lecture_hit.path = str(lecture_root / "DECO7250 Lecture 1.pptx")
+    lecture_hit.course = "DECO7250"
+    lecture_hit.source_type = "lecture-source"
+    lecture_hit.trust_level = 1
+
+    def fake_search(query, *, settings, flt, final_limit=None):
+        if flt.path_prefix and "Lecture Materials" in flt.path_prefix:
+            return SearchResponse(query=query, hits=[lecture_hit], used_vector=False)
+        return SearchResponse(query=query, hits=[], used_vector=False)
+
+    monkeypatch.setattr("app.agent.study_agent.search", fake_search)
+    result = answer(
+        "What are affordances?",
+        settings=settings,
+        adapter=EchoChatAdapter(),
+        course="DECO7250",
+    )
+
+    assert result.sources
+    assert result.sources[0]["source_type"] == "lecture-source"

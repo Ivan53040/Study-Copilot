@@ -56,8 +56,18 @@ export interface NotePreview {
 
 export interface CourseSummary {
   course: string;
+  label: string;
   documents: number;
   chunks: number;
+}
+
+export interface VaultScope {
+  id: string;
+  name: string;
+  kind: "course" | "folder";
+  course: string | null;
+  path: string;
+  documents: number;
 }
 
 export interface DocumentRow {
@@ -69,6 +79,36 @@ export interface DocumentRow {
   trust_level: number;
   chunks: number;
   path: string;
+}
+
+export interface LectureDocument {
+  id: number;
+  title: string;
+  path: string;
+  relative_path: string;
+  folder_course: string | null;
+  course: string | null;
+  week: number | null;
+  source_type: string | null;
+  chunks: number;
+  extension: string;
+}
+
+export interface LecturePreview {
+  id: number;
+  title: string;
+  path: string;
+  course: string | null;
+  week: number | null;
+  extension: string;
+  sections: { page: number | null; heading: string | null; content: string }[];
+}
+
+export interface LectureViewer {
+  id: number;
+  title: string;
+  extension: string;
+  pages: number;
 }
 
 export interface QuizQuestion {
@@ -200,6 +240,34 @@ export interface VaultGraph {
   stats: { notes: number; links: number };
 }
 
+export interface OrganizerMove {
+  from: string;
+  to: string;
+  reason: string;
+}
+
+export interface OrganizerPreview {
+  summary: string;
+  moves: OrganizerMove[];
+  inventory_count: number;
+  model: string;
+}
+
+export interface FormatPreview {
+  path: string;
+  before: string;
+  after: string;
+  changed: boolean;
+  model: string;
+}
+
+export interface NoteVersion {
+  id: string;
+  timestamp: string;
+  size: number;
+  content: string;
+}
+
 export interface Health {
   status: string;
   version: string;
@@ -208,4 +276,19 @@ export interface Health {
   output_root: string;
   default_provider: string;
   external_sources: number;
+}
+
+export interface AppSettings {
+  vault_root: string;
+  vault_exists: boolean;
+  lectures_root: string | null;
+  lectures_root_exists: boolean | null;
+  default_provider: "lmstudio" | "echo";
+  llm_base_url: string;
+  llm_model: string;
+  embedding_provider: "lmstudio" | "hash";
+  embedding_base_url: string | null;
+  embedding_model: string;
+  temperature: number;
+  require_citations: boolean;
 }

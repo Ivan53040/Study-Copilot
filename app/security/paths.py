@@ -68,9 +68,12 @@ def is_denied(path: str | Path, settings: Settings) -> bool:
 
 
 def _read_roots(settings: Settings) -> list[Path]:
-    return [_resolve(settings.vault.root)] + [
+    roots = [_resolve(settings.vault.root)] + [
         _resolve(src.path) for src in settings.external_sources
     ]
+    if settings.lectures.root is not None:
+        roots.append(_resolve(settings.lectures.root))
+    return roots
 
 
 def is_readable(path: str | Path, settings: Settings) -> bool:
@@ -84,6 +87,12 @@ def is_readable(path: str | Path, settings: Settings) -> bool:
     # External sources: any file inside a configured external dir is readable.
     if any(_is_relative_to(p, r) for r in external_roots):
         return True
+
+    # Lectures root: any file inside the configured lecture folder is readable.
+    if settings.lectures.root is not None:
+        lec_root = _resolve(settings.lectures.root)
+        if _is_relative_to(p, lec_root):
+            return True
 
     # Vault: must be under the vault root AND match a read_path glob.
     if _is_relative_to(p, vault_root):

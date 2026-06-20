@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -54,13 +55,41 @@ def answer(
     settings: Settings | None = None,
     adapter: ChatAdapter | None = None,
     course: str | None = None,
+    scope_path: str | None = None,
     conversation_id: int | None = None,
 ) -> AnswerResult:
     settings = settings or get_settings()
     adapter = adapter or get_chat_adapter(settings)
-    flt = MetadataFilter(course=course)
+    flt = MetadataFilter(course=course, path_prefix=scope_path)
 
     retrieval = search(question, settings=settings, flt=flt)
+    if course or scope_path:
+        lecture_root = (
+            Path(settings.vault.root).expanduser().resolve() / "Lecture Materials"
+        )
+        if lecture_root.is_dir():
+            lecture_retrieval = search(
+                question,
+                settings=settings,
+                flt=MetadataFilter(path_prefix=str(lecture_root)),
+                final_limit=max(3, settings.retrieval.final_context_limit // 2),
+            )
+            seen = {hit.chunk_id for hit in retrieval.hits}
+            combined = list(retrieval.hits)
+            combined.extend(
+                hit for hit in lecture_retrieval.hits if hit.chunk_id not in seen
+            )
+            combined.sort(
+                key=lambda hit: (
+                    1 if course and hit.course == course else 0,
+                    hit.score,
+                ),
+                reverse=True,
+            )
+            retrieval.hits = combined[: settings.retrieval.final_context_limit]
+            retrieval.used_vector = (
+                retrieval.used_vector or lecture_retrieval.used_vector
+            )
     context = build_context(
         retrieval.hits, max_chars=_context_budget(settings)
     )

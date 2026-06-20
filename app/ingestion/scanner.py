@@ -11,7 +11,7 @@ from app.config.settings import Settings
 from app.ingestion.hashing import sha256_file
 from app.security.paths import is_readable
 
-SUPPORTED_EXTENSIONS = {".md", ".markdown", ".txt", ".pdf"}
+SUPPORTED_EXTENSIONS = {".md", ".markdown", ".txt", ".pdf", ".pptx"}
 
 
 @dataclass
@@ -89,7 +89,28 @@ def scan_files(settings: Settings, course: str | None = None) -> list[ScannedFil
                 file_modified_at=_mtime(rp),
             )
 
-    # 2) External sources (carry course / source_type hints).
+    # 2) Configured lectures root (if outside the vault, add it as a scan source).
+    if settings.lectures.root is not None:
+        lec_root = settings.lectures.root.expanduser().resolve()
+        try:
+            lec_root.relative_to(vault_root)
+            # It's inside the vault — already covered above.
+        except ValueError:
+            # Outside the vault — scan it separately.
+            if lec_root.exists():
+                for fpath in _iter_dir_files(lec_root):
+                    rp = fpath.resolve()
+                    if rp in seen or not _supported(rp):
+                        continue
+                    seen[rp] = ScannedFile(
+                        path=rp,
+                        ext=rp.suffix.lower(),
+                        content_hash=sha256_file(rp),
+                        file_modified_at=_mtime(rp),
+                        source_type_hint="lecture-source",
+                    )
+
+    # 3) External sources (carry course / source_type hints).
     for src in settings.external_sources:
         base = Path(src.path).expanduser().resolve()
         if not base.exists():

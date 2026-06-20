@@ -11,6 +11,9 @@ def metadata_clause(flt: MetadataFilter, params: dict, alias: str = "c") -> str:
     if flt.course:
         clauses.append(f"upper({alias}.course) = :course")
         params["course"] = flt.course.replace(" ", "").upper()
+    if flt.path_prefix:
+        clauses.append("lower(replace(d.path, '\\', '/')) LIKE :path_prefix")
+        params["path_prefix"] = flt.path_prefix.replace("\\", "/").lower().rstrip("/") + "/%"
     if flt.week is not None:
         clauses.append(f"{alias}.week = :week")
         params["week"] = flt.week

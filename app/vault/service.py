@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from app.config.settings import Settings, get_settings
 from app.logging_config import get_logger
 from app.security.paths import (
     PathSecurityError,
+    assert_readable,
     assert_workspace_readable,
     assert_workspace_writable,
     is_denied,
@@ -215,7 +217,7 @@ def write_note(
 
     backup_path = None
     if settings.workspace.backup_on_edit and abs_path.exists():
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         backup = (
             _vault_root(settings) / _BACKUP_DIR / f"{relpath}.{stamp}.bak"
         )
@@ -261,18 +263,214 @@ def rename_note(
     return {"from": from_rel, "to": new_rel}
 
 
-def delete_note(relpath: str, settings: Settings | None = None) -> dict:
-    """Delete a note reversibly (moved to StudyCopilot/_backups/_deleted/)."""
+def move_item(
+    from_rel: str, to_folder: str, settings: Settings | None = None
+) -> dict:
+    """Move a file or folder to another folder while preserving its name."""
+    settings = settings or get_settings()
+    if not settings.workspace.allow_edit:
+        raise PathSecurityError("Editing is disabled.")
+    root = _vault_root(settings)
+    src = assert_workspace_readable(root / from_rel, settings)
+    folder = (root / to_folder).resolve()
+    if not src.exists():
+        raise FileNotFoundError(f"Path not found: {from_rel}")
+    if not folder.is_dir() or not is_in_vault(folder, settings):
+        raise PathSecurityError(f"Destination folder not allowed: {to_folder}")
+    if src == root or "StudyCopilot" in src.relative_to(root).parts:
+        raise PathSecurityError("System folders cannot be moved.")
+    dst = folder / src.name
+    if dst.exists():
+        raise FileExistsError(f"Target already exists: {dst.relative_to(root)}")
+    if src.is_dir():
+        try:
+            dst.relative_to(src)
+            raise PathSecurityError("A folder cannot be moved inside itself.")
+        except ValueError:
+            pass
+    elif src.suffix.lower() in NOTE_EXTS:
+        assert_workspace_writable(src, settings)
+    shutil.move(str(src), str(dst))
+    return {
+        "from": from_rel,
+        "to": dst.relative_to(root).as_posix(),
+        "type": "folder" if dst.is_dir() else "file",
+    }
+
+
+def import_files(
+    source_paths: list[str],
+    target_folder: str = "",
+    settings: Settings | None = None,
+) -> dict:
+    """Copy user-dropped files/directories into a vault folder."""
+    settings = settings or get_settings()
+    if not settings.workspace.allow_edit:
+        raise PathSecurityError("Editing is disabled.")
+    root = _vault_root(settings)
+    destination = (root / target_folder).resolve()
+    if not destination.is_dir() or not is_in_vault(destination, settings):
+        raise PathSecurityError(f"Import destination not allowed: {target_folder}")
+
+    imported: list[dict] = []
+    for raw in source_paths[:50]:
+        src = Path(raw).expanduser().resolve()
+        if not src.exists():
+            continue
+        if src == root:
+            raise PathSecurityError("The vault root cannot be imported into itself.")
+        try:
+            destination.relative_to(src)
+            raise PathSecurityError("A folder cannot be imported inside itself.")
+        except ValueError:
+            pass
+        base_name = src.name
+        dst = destination / base_name
+        stem, suffix = dst.stem, dst.suffix
+        counter = 2
+        while dst.exists():
+            dst = destination / f"{stem} {counter}{suffix}"
+            counter += 1
+        if src.is_dir():
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        imported.append(
+            {
+                "source": str(src),
+                "path": dst.relative_to(root).as_posix(),
+                "type": "folder" if dst.is_dir() else "file",
+            }
+        )
+    return {"imported": imported, "count": len(imported)}
+
+
+def copy_note(
+    from_rel: str, to_rel: str, settings: Settings | None = None
+) -> dict:
+    """Duplicate a text note within the vault."""
     settings = settings or get_settings()
     root = _vault_root(settings)
-    src = assert_workspace_writable(root / relpath, settings)
+    src = assert_workspace_readable(root / from_rel, settings)
     if not src.exists():
-        raise FileNotFoundError(f"Note not found: {relpath}")
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        raise FileNotFoundError(f"Note not found: {from_rel}")
+    dst = assert_workspace_writable(root / to_rel, settings)
+    if dst.exists():
+        raise FileExistsError(f"Target already exists: {to_rel}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    new_rel = dst.relative_to(root).as_posix()
+    return {"from": from_rel, "to": new_rel}
+
+
+def merge_notes(
+    target_rel: str,
+    source_rel: str,
+    delete_source: bool = False,
+    settings: Settings | None = None,
+) -> dict:
+    """Append one text note to another, backing up the target first."""
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    target = assert_workspace_writable(root / target_rel, settings)
+    source = assert_workspace_readable(root / source_rel, settings)
+    if not target.is_file() or not source.is_file():
+        raise FileNotFoundError("Both merge paths must be files.")
+    if target == source:
+        raise ValueError("A note cannot be merged with itself.")
+    target_text = target.read_text(encoding="utf-8", errors="replace")
+    source_text = source.read_text(encoding="utf-8", errors="replace")
+    separator = f"\n\n---\n\n## Merged from {source.stem}\n\n"
+    result = write_note(target_rel, target_text.rstrip() + separator + source_text, settings)
+    deleted = None
+    if delete_source:
+        deleted = delete_note(source_rel, settings)
+    return {"target": target_rel, "source": source_rel, "deleted": deleted, **result}
+
+
+def set_note_property(
+    relpath: str, key: str, value: str, settings: Settings | None = None
+) -> dict:
+    """Add or replace one YAML frontmatter property."""
+    settings = settings or get_settings()
+    if not key.strip() or "\n" in key:
+        raise ValueError("Property name is invalid.")
+    root = _vault_root(settings)
+    path = assert_workspace_writable(root / relpath, settings)
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        post = frontmatter.loads(raw)
+        post.metadata[key.strip()] = value
+        updated = frontmatter.dumps(post)
+    except Exception:
+        updated = f"---\n{key.strip()}: {json.dumps(value, ensure_ascii=False)}\n---\n\n{raw}"
+    result = write_note(relpath, updated, settings)
+    return {"path": relpath, "key": key.strip(), "value": value, **result}
+
+
+def list_versions(relpath: str, settings: Settings | None = None) -> list[dict]:
+    """List automatic backups for a note, newest first."""
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    assert_workspace_readable(root / relpath, settings)
+    backup_root = root / _BACKUP_DIR
+    parent = backup_root / Path(relpath).parent
+    pattern = f"{Path(relpath).name}.*.bak"
+    versions: list[dict] = []
+    if parent.exists():
+        for path in sorted(parent.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True):
+            versions.append(
+                {
+                    "id": path.relative_to(backup_root).as_posix(),
+                    "timestamp": datetime.fromtimestamp(
+                        path.stat().st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                    "size": path.stat().st_size,
+                    "content": path.read_text(encoding="utf-8", errors="replace"),
+                }
+            )
+    return versions
+
+
+def restore_version(
+    relpath: str, version_id: str, settings: Settings | None = None
+) -> dict:
+    """Restore one backup through write_note so the current version is preserved."""
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    backup_root = (root / _BACKUP_DIR).resolve()
+    version = (backup_root / version_id).resolve()
+    try:
+        version.relative_to(backup_root)
+    except ValueError as exc:
+        raise PathSecurityError("Version path is outside the backup area.") from exc
+    if not version.is_file() or version.suffix.lower() != ".bak":
+        raise FileNotFoundError("Version not found.")
+    return write_note(
+        relpath,
+        version.read_text(encoding="utf-8", errors="replace"),
+        settings,
+    )
+
+
+def delete_note(relpath: str, settings: Settings | None = None) -> dict:
+    """Delete a note or folder reversibly into the vault backup area."""
+    settings = settings or get_settings()
+    root = _vault_root(settings)
+    src = assert_workspace_readable(root / relpath, settings)
+    if not src.exists():
+        raise FileNotFoundError(f"Path not found: {relpath}")
+    if src == root or src == settings.output_root.resolve():
+        raise PathSecurityError("The vault root and StudyCopilot system folder cannot be deleted.")
+    if src.is_file():
+        src = assert_workspace_writable(src, settings)
+    elif not settings.workspace.allow_edit or not is_in_vault(src, settings):
+        raise PathSecurityError(f"Folder not editable: {relpath}")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     dest = root / "StudyCopilot" / "_backups" / "_deleted" / f"{relpath}.{stamp}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
-    logger.info("Deleted note %s (backup %s)", relpath, dest)
+    logger.info("Deleted path %s (backup %s)", relpath, dest)
     return {"deleted": relpath, "backup": str(dest)}
 
 
@@ -286,11 +484,18 @@ def reveal_note(relpath: str, settings: Settings | None = None) -> dict:
 
 
 def open_external(relpath: str, settings: Settings | None = None) -> dict:
-    """Open the note in the OS default application (Windows)."""
+    """Open an approved vault or indexed external source in its default app."""
     settings = settings or get_settings()
-    p = assert_workspace_readable(_vault_root(settings) / relpath, settings)
+    supplied = Path(relpath).expanduser()
+    p = (
+        assert_readable(supplied, settings)
+        if supplied.is_absolute()
+        else assert_workspace_readable(_vault_root(settings) / supplied, settings)
+    )
+    if not p.exists():
+        raise FileNotFoundError(f"Source not found: {relpath}")
     os.startfile(str(p))  # noqa: S606 - Windows desktop app, user-initiated
-    return {"opened": relpath}
+    return {"opened": str(p)}
 
 
 _PDF_CSS = """

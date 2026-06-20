@@ -14,10 +14,12 @@ from app.api import (
     exams,
     health,
     ingest,
+    lectures,
     notes,
     plans,
     quizzes,
     search,
+    settings,
     sync,
     vault,
 )
@@ -68,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(ingest.router)
     app.include_router(courses.router)
+    app.include_router(lectures.router)
     app.include_router(search.router)
     app.include_router(chat.router)
     app.include_router(notes.router)
@@ -76,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(exams.router)
     app.include_router(vault.router)
     app.include_router(sync.router)
+    app.include_router(settings.router)
     return app
 
 

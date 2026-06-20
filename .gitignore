@@ -16,6 +16,11 @@ data/
 # Generated eval output (report.md is committed as a snapshot)
 evals/report.json
 
+# Frontend and Tauri build output
+frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri/target-bundle/
+
 # OS
 .DS_Store
 Thumbs.db

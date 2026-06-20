@@ -82,6 +82,8 @@ def _sources_section(sources: dict[str, SearchHit]) -> str:
 def generate_revision_note(
     *,
     course: str | None = None,
+    scope_path: str | None = None,
+    scope_name: str | None = None,
     week: int | None = None,
     topic: str | None = None,
     settings: Settings | None = None,
@@ -92,11 +94,12 @@ def generate_revision_note(
     settings = settings or get_settings()
     adapter = adapter or get_chat_adapter(settings)
 
-    title = _note_title(course, week, topic)
+    display_scope = course or scope_name
+    title = _note_title(display_scope, week, topic)
     filename = safe_filename(title) + ".md"
     target_rel = f"{_OUTPUT_SUBDIR}/{filename}"
 
-    flt = MetadataFilter(course=course, week=week)
+    flt = MetadataFilter(course=course, path_prefix=scope_path, week=week)
     retrieval = search(
         _query(course, week, topic), settings=settings, flt=flt,
         final_limit=_NOTE_CONTEXT_LIMIT,
@@ -112,7 +115,7 @@ def generate_revision_note(
             model=adapter.model_name,
         )
 
-    scope = _scope_label(course, week, topic)
+    scope = _scope_label(display_scope, week, topic)
     messages = [
         ChatMessage(role="system", content=NOTE_SYSTEM_PROMPT),
         ChatMessage(role="user", content=build_note_prompt(scope, context.text)),
@@ -147,7 +150,7 @@ def generate_revision_note(
     hits_in_context = list(context.sources.values())
     frontmatter = revision_note_frontmatter(
         title=title,
-        course=course,
+        course=display_scope,
         week=week,
         derived_from=derived_from(hits_in_context),
     )

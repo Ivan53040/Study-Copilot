@@ -41,6 +41,14 @@ def test_pdf_defaults_to_past_paper_trust():
     assert cls.trust_level == TRUST_LEVELS["past-paper"]
 
 
+def test_lecture_materials_are_trusted_lecture_sources(tmp_path):
+    cls = classify(tmp_path / "Lecture Materials" / "DECO7250 Week 1.pptx")
+    assert cls.course == "DECO7250"
+    assert cls.document_type == "presentation"
+    assert cls.source_type == "lecture-source"
+    assert cls.trust_level == TRUST_LEVELS["lecture-source"]
+
+
 def test_marking_guide_detected():
     cls = classify("REIT6811_Mock_Exam_1_Marking_Guide.md")
     assert cls.document_type == "marking-guide"

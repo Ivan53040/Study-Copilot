@@ -16,6 +16,7 @@ router = APIRouter(tags=["search"])
 class SearchRequest(BaseModel):
     query: str
     course: str | None = None
+    scope_path: str | None = None
     week: int | None = None
     source_type: str | None = None
     max_trust_level: int | None = None
@@ -29,6 +30,7 @@ def post_search(
 ) -> dict:
     flt = MetadataFilter(
         course=req.course,
+        path_prefix=req.scope_path,
         week=req.week,
         source_type=req.source_type,
         max_trust_level=req.max_trust_level,

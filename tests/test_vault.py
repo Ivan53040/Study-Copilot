@@ -12,10 +12,17 @@ from app.vault.service import (
     export_pdf,
     extract_headings,
     extract_links,
+    import_files,
     list_tree,
+    list_versions,
+    merge_notes,
+    move_item,
+    open_external,
     read_note,
     rename_note,
+    restore_version,
     search_notes,
+    set_note_property,
     write_note,
 )
 
@@ -162,3 +169,58 @@ def test_export_pdf(vault):
 
     pdf = Path(res["pdf"])
     assert pdf.exists() and pdf.suffix == ".pdf" and pdf.stat().st_size > 0
+
+
+def test_move_file_and_folder(vault):
+    create_folder("Destination", vault)
+    moved_file = move_item("A.md", "Destination", vault)
+    assert moved_file["to"] == "Destination/A.md"
+    assert (vault.vault.root / "Destination" / "A.md").exists()
+
+    create_folder("Loose", vault)
+    (vault.vault.root / "Loose" / "asset.pdf").write_bytes(b"pdf")
+    moved_folder = move_item("Loose", "Destination", vault)
+    assert moved_folder["to"] == "Destination/Loose"
+    assert (vault.vault.root / "Destination" / "Loose" / "asset.pdf").exists()
+
+
+def test_import_external_file_and_folder(vault, tmp_path):
+    source_file = tmp_path / "lecture.pdf"
+    source_file.write_bytes(b"lecture")
+    source_folder = tmp_path / "Resources"
+    source_folder.mkdir()
+    (source_folder / "diagram.png").write_bytes(b"image")
+
+    result = import_files([str(source_file), str(source_folder)], "", vault)
+    assert result["count"] == 2
+    assert (vault.vault.root / "lecture.pdf").read_bytes() == b"lecture"
+    assert (vault.vault.root / "Resources" / "diagram.png").exists()
+
+
+def test_open_external_search_source(settings, monkeypatch):
+    paper = settings.external_sources[0].path / "exam.pdf"
+    paper.write_bytes(b"pdf")
+    opened: list[str] = []
+    monkeypatch.setattr("app.vault.service.os.startfile", opened.append)
+
+    result = open_external(str(paper), settings)
+
+    assert opened == [str(paper.resolve())]
+    assert result["opened"] == str(paper.resolve())
+
+
+def test_merge_property_and_version_restore(vault):
+    set_note_property("A.md", "status", "review", vault)
+    assert "status: review" in read_note("A.md", vault)["content"]
+
+    merge_notes("A.md", "B.md", False, vault)
+    merged = read_note("A.md", vault)["content"]
+    assert "Merged from B" in merged
+    assert "Back to [[A]]" in merged
+
+    versions = list_versions("A.md", vault)
+    assert len(versions) >= 2
+    oldest = versions[-1]
+    restore_version("A.md", oldest["id"], vault)
+    restored = read_note("A.md", vault)["content"]
+    assert "Links to [[B]]" in restored

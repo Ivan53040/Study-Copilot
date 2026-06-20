@@ -129,6 +129,8 @@ def _persist(
 def generate_quiz(
     *,
     course: str | None = None,
+    scope_path: str | None = None,
+    scope_name: str | None = None,
     week: int | None = None,
     topic: str | None = None,
     num_questions: int = 5,
@@ -139,14 +141,17 @@ def generate_quiz(
     settings = settings or get_settings()
     adapter = adapter or get_chat_adapter(settings)
 
-    flt = MetadataFilter(course=course, week=week)
+    tracking_scope = course or (
+        scope_name.replace(" ", "").upper() if scope_name else None
+    )
+    flt = MetadataFilter(course=course, path_prefix=scope_path, week=week)
     retrieval = search(
         _query(course, week, topic), settings=settings, flt=flt, final_limit=12
     )
     context = build_context(retrieval.hits)
     if context.is_empty:
         return QuizResult(
-            None, course, week, topic,
+            None, tracking_scope, week, topic,
             warnings=["No sources found for this scope; cannot generate a quiz."],
         )
 
@@ -156,7 +161,7 @@ def generate_quiz(
         ChatMessage(
             role="user",
             content=build_quiz_prompt(
-                _scope(course, week, topic), num_questions, context.text
+                _scope(tracking_scope, week, topic), num_questions, context.text
             ),
         ),
     ]
@@ -165,18 +170,18 @@ def generate_quiz(
         data = extract_json(response.content)
     except (ChatError, ValueError) as exc:
         logger.warning("Quiz generation failed: %s", exc)
-        return QuizResult(None, course, week, topic, warnings=[str(exc)])
+        return QuizResult(None, tracking_scope, week, topic, warnings=[str(exc)])
 
     raw_questions = data.get("questions", []) if isinstance(data, dict) else []
     questions = [q for q in (_normalise_question(r) for r in raw_questions) if q]
     if not questions:
         return QuizResult(
-            None, course, week, topic,
+            None, tracking_scope, week, topic,
             warnings=["Model returned no valid questions."],
         )
 
     with session_scope(settings) as session:
-        quiz = _persist(session, course, week, topic, questions)
+        quiz = _persist(session, tracking_scope, week, topic, questions)
         quiz_id = quiz.id
         client_questions = [
             {
@@ -191,4 +196,4 @@ def generate_quiz(
             for q in quiz.questions
         ]
 
-    return QuizResult(quiz_id, course, week, topic, questions=client_questions)
+    return QuizResult(quiz_id, tracking_scope, week, topic, questions=client_questions)

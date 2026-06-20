@@ -1,12 +1,14 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { mdComponents, mdRehypePlugins, mdRemarkPlugins } from "../markdown";
 import { api } from "../api";
 import type { NotePreview } from "../types";
 import { Warnings } from "../components";
+import { CoursePicker } from "../CoursePicker";
+import type { VaultScope } from "../types";
 
 export function GeneratePage() {
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [week, setWeek] = useState("");
   const [topic, setTopic] = useState("");
   const [preview, setPreview] = useState<NotePreview | null>(null);
@@ -16,7 +18,9 @@ export function GeneratePage() {
   const [error, setError] = useState<string | null>(null);
 
   const body = () => ({
-    course: course || null,
+    course: scope?.course ?? null,
+    scope_path: scope?.path ?? null,
+    scope_name: scope?.name ?? null,
     week: week ? Number(week) : null,
     topic: topic || null,
   });
@@ -60,7 +64,7 @@ export function GeneratePage() {
         <div className="row">
           <div>
             <div className="small muted">Course</div>
-            <input value={course} onChange={(e) => setCourse(e.target.value)} />
+            <CoursePicker value={scope} onChange={setScope} />
           </div>
           <div>
             <div className="small muted">Week (optional)</div>
@@ -84,7 +88,7 @@ export function GeneratePage() {
         </div>
         <div className="spacer" />
         <div className="row">
-          <button className="primary" onClick={generate} disabled={loading}>
+          <button className="primary" onClick={generate} disabled={loading || (!scope && !topic)}>
             {loading ? "Generating…" : "Preview"}
           </button>
           <button onClick={save} disabled={saving || !preview}>
@@ -110,7 +114,13 @@ export function GeneratePage() {
                 {preview.title} → <code>{preview.target_path}</code>
               </div>
               <div className="md">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview.content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={mdRemarkPlugins}
+                  rehypePlugins={mdRehypePlugins}
+                  components={mdComponents}
+                >
+                  {preview.content}
+                </ReactMarkdown>
               </div>
             </div>
           ) : (

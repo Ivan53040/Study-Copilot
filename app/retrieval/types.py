@@ -44,6 +44,7 @@ class SearchHit:
 @dataclass
 class MetadataFilter:
     course: str | None = None
+    path_prefix: str | None = None
     week: int | None = None
     source_type: str | None = None
     max_trust_level: int | None = None  # keep only sources at least this trusted

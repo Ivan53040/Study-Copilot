@@ -2,6 +2,8 @@ import { useState } from "react";
 import { api } from "../api";
 import type { QuizResult, SubmitResult } from "../types";
 import { Warnings } from "../components";
+import { CoursePicker } from "../CoursePicker";
+import type { VaultScope } from "../types";
 
 const OUTCOME_COLOR: Record<string, string> = {
   correct: "var(--good)",
@@ -10,7 +12,7 @@ const OUTCOME_COLOR: Record<string, string> = {
 };
 
 export function QuizPage() {
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [week, setWeek] = useState("");
   const [topic, setTopic] = useState("");
   const [num, setNum] = useState("5");
@@ -30,7 +32,9 @@ export function QuizPage() {
     setLoading(true);
     try {
       const body = {
-        course: course || null,
+        course: scope?.course ?? null,
+        scope_path: scope?.path ?? null,
+        scope_name: scope?.name ?? null,
         week: week ? Number(week) : null,
         topic: topic || null,
         num_questions: Number(num) || 5,
@@ -78,7 +82,7 @@ export function QuizPage() {
         <div className="row">
           <div>
             <div className="small muted">Course</div>
-            <input value={course} onChange={(e) => setCourse(e.target.value)} />
+            <CoursePicker value={scope} onChange={setScope} />
           </div>
           <div>
             <div className="small muted">Week</div>
@@ -95,7 +99,7 @@ export function QuizPage() {
         </div>
         <div className="spacer" />
         <div className="row">
-          <button className="primary" onClick={generate} disabled={loading}>
+          <button className="primary" onClick={generate} disabled={loading || (!scope && !topic)}>
             {loading ? "Generating…" : examMode ? "Generate mock exam" : "Generate quiz"}
           </button>
           <label className="small muted" style={{ display: "flex", gap: 6, alignItems: "center" }}>

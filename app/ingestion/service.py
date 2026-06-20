@@ -16,6 +16,7 @@ from app.ingestion import metadata as meta
 from app.ingestion.chunker import RawChunk, chunk_markdown, chunk_pdf
 from app.ingestion.markdown_parser import parse_markdown
 from app.ingestion.pdf_parser import parse_pdf
+from app.ingestion.pptx_parser import parse_pptx
 from app.ingestion.scanner import ScannedFile, diff_against_index, scan_files
 from app.logging_config import get_logger
 from app.security.paths import assert_readable
@@ -52,6 +53,9 @@ def _parse_and_chunk(
         return doc.frontmatter, chunk_markdown(doc)
     if sf.ext == ".pdf":
         doc = parse_pdf(sf.path)
+        return {}, chunk_pdf(doc)
+    if sf.ext == ".pptx":
+        doc = parse_pptx(sf.path)
         return {}, chunk_pdf(doc)
     if sf.ext == ".txt":
         text = Path(sf.path).read_text(encoding="utf-8", errors="replace")

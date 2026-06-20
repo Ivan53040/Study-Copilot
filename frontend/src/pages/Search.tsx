@@ -2,13 +2,16 @@ import { useState } from "react";
 import { api } from "../api";
 import type { SearchResponse } from "../types";
 import { TrustBadge } from "../components";
+import { CoursePicker } from "../CoursePicker";
+import type { VaultScope } from "../types";
 
 export function SearchPage() {
   const [query, setQuery] = useState("");
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [maxTrust, setMaxTrust] = useState<string>("");
   const [resp, setResp] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [opening, setOpening] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const run = async () => {
@@ -18,7 +21,8 @@ export function SearchPage() {
     try {
       const r = await api.search({
         query,
-        course: course || null,
+        course: scope?.course ?? null,
+        scope_path: scope?.path ?? null,
         max_trust_level: maxTrust ? Number(maxTrust) : null,
         limit: 10,
         include_content: true,
@@ -28,6 +32,19 @@ export function SearchPage() {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openResult = async (path: string) => {
+    if (opening) return;
+    setOpening(path);
+    setError(null);
+    try {
+      await api.vaultOpenExternal(path);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setOpening(null);
     }
   };
 
@@ -47,12 +64,7 @@ export function SearchPage() {
             onKeyDown={(e) => e.key === "Enter" && run()}
             placeholder="Search your materials…"
           />
-          <input
-            value={course}
-            onChange={(e) => setCourse(e.target.value)}
-            placeholder="course"
-            style={{ width: 120 }}
-          />
+          <CoursePicker value={scope} onChange={setScope} />
           <select value={maxTrust} onChange={(e) => setMaxTrust(e.target.value)}>
             <option value="">any trust</option>
             <option value="1">official only (≤1)</option>
@@ -76,7 +88,17 @@ export function SearchPage() {
             {resp.note && <span>· {resp.note}</span>}
           </div>
           {resp.results.map((h) => (
-            <div className="result" key={h.chunk_id}>
+            <div
+              className="result search-result-open"
+              key={h.chunk_id}
+              role="button"
+              tabIndex={0}
+              title={`Open ${h.title}`}
+              onClick={() => openResult(h.path)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") openResult(h.path);
+              }}
+            >
               <h4>{h.title}</h4>
               <div className="meta">
                 <span className="link" style={{ color: "var(--accent)" }}>
@@ -87,6 +109,7 @@ export function SearchPage() {
                 <span>score {h.score.toFixed(3)}</span>
               </div>
               {h.content && <div className="snippet">{h.content}</div>}
+              {opening === h.path && <div className="small muted">Opening…</div>}
             </div>
           ))}
         </div>

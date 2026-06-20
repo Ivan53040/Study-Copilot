@@ -1,21 +1,23 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { AnalyzeReport, PastPaperQuestion } from "../types";
+import type { AnalyzeReport, PastPaperQuestion, VaultScope } from "../types";
+import { CoursePicker } from "../CoursePicker";
 
 export function PastPapersPage() {
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [report, setReport] = useState<AnalyzeReport | null>(null);
   const [questions, setQuestions] = useState<PastPaperQuestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const analyze = async () => {
+    if (!scope?.course) return;
     setError(null);
     setLoading(true);
     try {
-      const r = await api.analyzePastPapers(course || null);
-      setReport(r);
-      const list = await api.pastPapers(course);
+      const result = await api.analyzePastPapers(scope.course);
+      setReport(result);
+      const list = await api.pastPapers(scope.course);
       setQuestions(list.questions);
     } catch (e) {
       setError((e as Error).message);
@@ -24,33 +26,31 @@ export function PastPapersPage() {
     }
   };
 
-  // Frequency per concept, derived from extracted questions.
-  const freq = questions.reduce<Record<string, number>>((acc, q) => {
-    const k = q.concept ?? "General";
-    acc[k] = (acc[k] ?? 0) + 1;
+  const frequencies = questions.reduce<Record<string, number>>((acc, question) => {
+    const key = question.concept ?? "General";
+    acc[key] = (acc[key] ?? 0) + 1;
     return acc;
   }, {});
-  const freqRows = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+  const frequencyRows = Object.entries(frequencies).sort((a, b) => b[1] - a[1]);
 
   return (
     <div>
       <h1 className="page-title">Past Papers</h1>
       <p className="page-sub">
-        Extract questions from past papers and estimate which concepts come up
-        most — this feeds your study-plan priorities.
+        Select any course folder, extract its past-paper questions, and feed those
+        priorities into your study plan.
       </p>
 
       <div className="card">
         <div className="row">
-          <input value={course} onChange={(e) => setCourse(e.target.value)} style={{ width: 160 }} />
-          <button className="primary" onClick={analyze} disabled={loading}>
+          <CoursePicker value={scope} onChange={setScope} courseOnly />
+          <button className="primary" onClick={analyze} disabled={loading || !scope?.course}>
             {loading ? "Analysing…" : "Analyse past papers"}
           </button>
         </div>
       </div>
 
       {error && <div className="warn-banner" style={{ marginTop: 12 }}>{error}</div>}
-
       {report && (
         <div className="note-banner" style={{ marginTop: 12 }}>
           {report.documents} paper(s) · {report.questions} questions ·{" "}
@@ -59,21 +59,13 @@ export function PastPapersPage() {
         </div>
       )}
 
-      {freqRows.length > 0 && (
+      {frequencyRows.length > 0 && (
         <div className="card" style={{ padding: 0, marginTop: 16 }}>
           <table>
-            <thead>
-              <tr>
-                <th>Concept</th>
-                <th>Exam frequency</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Concept</th><th>Exam frequency</th></tr></thead>
             <tbody>
-              {freqRows.map(([concept, n]) => (
-                <tr key={concept}>
-                  <td>{concept}</td>
-                  <td>{n}</td>
-                </tr>
+              {frequencyRows.map(([concept, count]) => (
+                <tr key={concept}><td>{concept}</td><td>{count}</td></tr>
               ))}
             </tbody>
           </table>
@@ -82,16 +74,14 @@ export function PastPapersPage() {
 
       {questions.length > 0 && (
         <div style={{ marginTop: 18 }}>
-          <div className="small muted" style={{ marginBottom: 8 }}>
-            Extracted questions
-          </div>
-          {questions.slice(0, 30).map((q) => (
-            <div className="result" key={q.id}>
+          <div className="small muted" style={{ marginBottom: 8 }}>Extracted questions</div>
+          {questions.slice(0, 30).map((question) => (
+            <div className="result" key={question.id}>
               <div className="meta">
-                <span>{q.concept}</span>
-                {q.marks != null && <span>· {q.marks} marks</span>}
+                <span>{question.concept}</span>
+                {question.marks != null && <span>· {question.marks} marks</span>}
               </div>
-              <div className="snippet">{q.text}</div>
+              <div className="snippet">{question.text}</div>
             </div>
           ))}
         </div>

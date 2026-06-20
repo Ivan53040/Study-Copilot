@@ -17,6 +17,7 @@ router = APIRouter(tags=["chat"])
 class ChatRequest(BaseModel):
     message: str
     course: str | None = None
+    scope_path: str | None = None
     conversation_id: int | None = None
 
 
@@ -26,6 +27,7 @@ def post_chat(req: ChatRequest, settings: Settings = Depends(get_settings)) -> d
         req.message,
         settings=settings,
         course=req.course,
+        scope_path=req.scope_path,
         conversation_id=req.conversation_id,
     )
     return result.as_dict()

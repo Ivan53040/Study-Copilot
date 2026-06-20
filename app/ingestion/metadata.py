@@ -63,9 +63,14 @@ def _normalise_course(raw: str | None) -> str | None:
 def _infer_course(path: Path, hint: str | None) -> str | None:
     if hint:
         return _normalise_course(hint)
-    haystack = f"{path.parent.name} {path.stem}"
-    m = _COURSE_CODE_RE.search(haystack.upper())
-    return _normalise_course(m.group(1)) if m else None
+    # Search the filename first, then walk parent folders from nearest to
+    # farthest. This keeps course classification working in nested structures
+    # such as "Year 1 Sem 1/CSSE7030/Lectures/Week 1.md".
+    for part in [path.stem, *reversed(path.parent.parts)]:
+        m = _COURSE_CODE_RE.search(part.upper())
+        if m:
+            return _normalise_course(m.group(1))
+    return None
 
 
 def _infer_week(path: Path, frontmatter: dict) -> int | None:
@@ -142,6 +147,10 @@ def classify(
         frontmatter.get("source_type")
         or _infer_source_type(document_type, ext, source_type_hint)
     )
+    if "Lecture Materials" in p.parts and not frontmatter.get("source_type"):
+        source_type = "lecture-source"
+        if not frontmatter.get("type") and not frontmatter.get("document_type"):
+            document_type = "presentation" if ext == ".pptx" else "lecture-material"
 
     fm_trust = frontmatter.get("trust_level")
     if isinstance(fm_trust, int):

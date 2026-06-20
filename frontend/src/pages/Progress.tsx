@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api";
 import type { ConceptProgress } from "../types";
+import type { VaultScope } from "../types";
+import { CoursePicker } from "../CoursePicker";
 
 const STATUS_COLOR: Record<string, string> = {
   strong: "var(--good)",
@@ -24,7 +26,7 @@ function ConfidenceBar({ value, status }: { value: number; status: string }) {
 }
 
 export function ProgressPage() {
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [rows, setRows] = useState<ConceptProgress[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,7 +35,8 @@ export function ProgressPage() {
     setError(null);
     setLoading(true);
     try {
-      const r = await api.progress(course);
+      if (!scope) return;
+      const r = await api.progress(scope.course ?? scope.name);
       setRows(r.concepts);
     } catch (e) {
       setError((e as Error).message);
@@ -41,11 +44,6 @@ export function ProgressPage() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString() : "—");
 
@@ -57,8 +55,8 @@ export function ProgressPage() {
       </p>
 
       <div className="row" style={{ marginBottom: 16 }}>
-        <input value={course} onChange={(e) => setCourse(e.target.value)} style={{ width: 160 }} />
-        <button className="primary" onClick={load} disabled={loading}>
+        <CoursePicker value={scope} onChange={setScope} />
+        <button className="primary" onClick={load} disabled={loading || !scope}>
           {loading ? "…" : "Refresh"}
         </button>
       </div>

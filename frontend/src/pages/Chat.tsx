@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { mdComponents, mdRehypePlugins, mdRemarkPlugins } from "../markdown";
 import { api } from "../api";
 import type { Citation } from "../types";
 import { CitationLine, Warnings } from "../components";
+import { CoursePicker } from "../CoursePicker";
+import type { VaultScope } from "../types";
 
 interface Turn {
   role: "user" | "assistant";
@@ -15,7 +17,7 @@ interface Turn {
 export function ChatPage() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [convId, setConvId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +33,8 @@ export function ChatPage() {
     try {
       const res = await api.chat({
         message,
-        course: course || null,
+        course: scope?.course ?? null,
+        scope_path: scope?.path ?? null,
         conversation_id: convId,
       });
       setConvId(res.conversation_id);
@@ -60,13 +63,17 @@ export function ChatPage() {
       </p>
 
       <div className="row" style={{ marginBottom: 12 }}>
-        <label className="small muted">Course filter:</label>
-        <input
-          value={course}
-          onChange={(e) => setCourse(e.target.value)}
-          placeholder="(all courses)"
-          style={{ width: 160 }}
-        />
+        <label className="small muted">Course</label>
+        <div className="chat-course-picker">
+          <CoursePicker
+            value={scope}
+            onChange={(selected) => {
+              setScope(selected);
+              setTurns([]);
+              setConvId(null);
+            }}
+          />
+        </div>
         <button
           onClick={() => {
             setTurns([]);
@@ -89,7 +96,13 @@ export function ChatPage() {
           {turns.map((t, i) => (
             <div key={i} className={`msg ${t.role}`}>
               <div className="md">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={mdRemarkPlugins}
+                  rehypePlugins={mdRehypePlugins}
+                  components={mdComponents}
+                >
+                  {t.content}
+                </ReactMarkdown>
               </div>
               {t.citations && t.citations.length > 0 && (
                 <div className="citations">

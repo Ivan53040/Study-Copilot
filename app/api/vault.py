@@ -10,16 +10,25 @@ from app.security.paths import PathSecurityError
 from app.vault.service import (
     build_graph,
     create_folder,
+    copy_note,
     delete_note,
     export_pdf,
+    import_files,
     list_tree,
+    list_versions,
+    merge_notes,
+    move_item,
     open_external,
     read_note,
     rename_note,
+    restore_version,
     reveal_note,
     search_notes,
+    set_note_property,
     write_note,
 )
+from app.vault.organizer import apply_organization, preview_organization
+from app.vault.formatter import preview_document_format
 
 router = APIRouter(prefix="/vault", tags=["vault"])
 
@@ -42,9 +51,85 @@ class PathReq(BaseModel):
     path: str
 
 
+class MoveReq(BaseModel):
+    from_path: str
+    to_folder: str = ""
+
+
+class ImportReq(BaseModel):
+    source_paths: list[str]
+    target_folder: str = ""
+
+
+class MergeReq(BaseModel):
+    target_path: str
+    source_path: str
+    delete_source: bool = False
+
+
+class PropertyReq(BaseModel):
+    path: str
+    key: str
+    value: str
+
+
+class RestoreReq(BaseModel):
+    path: str
+    version_id: str
+
+
+class OrganizeMove(BaseModel):
+    from_path: str
+    to_path: str
+    reason: str = ""
+
+
+class OrganizeApply(BaseModel):
+    moves: list[OrganizeMove]
+
+
+class FormatPreviewReq(BaseModel):
+    path: str
+    content: str | None = None
+
+
 @router.get("/tree")
 def get_tree(settings: Settings = Depends(get_settings)) -> dict:
     return list_tree(settings)
+
+
+@router.post("/organize/preview")
+def post_organize_preview(settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return preview_organization(settings)
+    except (RuntimeError, PathSecurityError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/organize/apply")
+def post_organize_apply(
+    req: OrganizeApply, settings: Settings = Depends(get_settings)
+) -> dict:
+    moves = [
+        {"from": move.from_path, "to": move.to_path, "reason": move.reason}
+        for move in req.moves
+    ]
+    try:
+        return apply_organization(moves, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/format/preview")
+def post_format_preview(
+    req: FormatPreviewReq, settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return preview_document_format(req.path, req.content, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/note")
@@ -87,6 +172,89 @@ def post_rename(req: RenameReq, settings: Settings = Depends(get_settings)) -> d
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/copy")
+def post_copy(req: RenameReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return copy_note(req.from_path, req.to_path, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/move")
+def post_move(req: MoveReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return move_item(req.from_path, req.to_folder, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/import")
+def post_import(req: ImportReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return import_files(req.source_paths, req.target_folder, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/merge")
+def post_merge(req: MergeReq, settings: Settings = Depends(get_settings)) -> dict:
+    try:
+        return merge_notes(
+            req.target_path,
+            req.source_path,
+            req.delete_source,
+            settings,
+        )
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/property")
+def post_property(
+    req: PropertyReq, settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return set_note_property(req.path, req.key, req.value, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/versions")
+def get_versions(
+    path: str = Query(...), settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return {"path": path, "versions": list_versions(path, settings)}
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/versions/restore")
+def post_restore(
+    req: RestoreReq, settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return restore_version(req.path, req.version_id, settings)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/delete")

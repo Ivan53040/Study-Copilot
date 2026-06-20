@@ -3,9 +3,14 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "note-*"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-create",
+    "core:webview:allow-create-webview-window",
+    "dialog:allow-open",
+    "opener:allow-open-url"
   ]
 }

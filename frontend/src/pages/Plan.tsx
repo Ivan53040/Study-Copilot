@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { DailyPlan } from "../types";
+import type { DailyPlan, VaultScope } from "../types";
+import { CoursePicker } from "../CoursePicker";
 
 const STATUS_COLOR: Record<string, string> = {
   strong: "var(--good)",
@@ -10,7 +11,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function PlanPage() {
-  const [course, setCourse] = useState("REIT6811");
+  const [scope, setScope] = useState<VaultScope | null>(null);
   const [minutes, setMinutes] = useState("60");
   const [examDate, setExamDate] = useState("");
   const [plan, setPlan] = useState<DailyPlan | null>(null);
@@ -19,18 +20,19 @@ export function PlanPage() {
   const [error, setError] = useState<string | null>(null);
 
   const run = async (write: boolean) => {
+    if (!scope) return;
     setError(null);
     setSavedPath(null);
     setLoading(true);
     try {
-      const p = await api.dailyPlan({
-        course: course || null,
+      const result = await api.dailyPlan({
+        course: scope.course ?? scope.name,
         available_minutes: Number(minutes) || 60,
         exam_date: examDate || null,
         write,
       });
-      setPlan(p);
-      if (write && p.written) setSavedPath(p.target_path);
+      setPlan(result);
+      if (write && result.written) setSavedPath(result.target_path);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -42,15 +44,15 @@ export function PlanPage() {
     <div>
       <h1 className="page-title">Daily Plan</h1>
       <p className="page-sub">
-        A prioritised study plan from your weak topics, review schedule, and exam
-        frequency.
+        Build a plan from weak topics, review history, and exam frequency for any
+        course in your vault.
       </p>
 
       <div className="card">
         <div className="row">
-          <div>
+          <div className="grow">
             <div className="small muted">Course</div>
-            <input value={course} onChange={(e) => setCourse(e.target.value)} />
+            <CoursePicker value={scope} onChange={setScope} />
           </div>
           <div>
             <div className="small muted">Available minutes</div>
@@ -63,21 +65,17 @@ export function PlanPage() {
         </div>
         <div className="spacer" />
         <div className="row">
-          <button className="primary" onClick={() => run(false)} disabled={loading}>
+          <button className="primary" onClick={() => run(false)} disabled={loading || !scope}>
             {loading ? "…" : "Build plan"}
           </button>
-          <button onClick={() => run(true)} disabled={loading || !plan}>
+          <button onClick={() => run(true)} disabled={loading || !plan || !scope}>
             Save to vault
           </button>
         </div>
       </div>
 
       {error && <div className="warn-banner" style={{ marginTop: 12 }}>{error}</div>}
-      {savedPath && (
-        <div className="note-banner" style={{ marginTop: 12 }}>
-          ✓ Saved to <code>{savedPath}</code>
-        </div>
-      )}
+      {savedPath && <div className="note-banner" style={{ marginTop: 12 }}>✓ Saved to <code>{savedPath}</code></div>}
 
       {plan && (
         <div style={{ marginTop: 16 }}>
@@ -87,30 +85,18 @@ export function PlanPage() {
             </div>
           )}
           {plan.data.blocks.length === 0 ? (
-            <div className="muted">
-              No weak topics to plan — take a quiz to surface gaps.
-            </div>
+            <div className="muted">No weak topics yet — take a quiz for this course to surface gaps.</div>
           ) : (
             <div className="card" style={{ padding: 0 }}>
               <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Concept</th>
-                    <th>Time</th>
-                    <th>Focus</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>#</th><th>Concept</th><th>Time</th><th>Focus</th></tr></thead>
                 <tbody>
-                  {plan.data.blocks.map((b, i) => (
-                    <tr key={b.concept_id}>
-                      <td>{i + 1}</td>
-                      <td>
-                        <span style={{ color: STATUS_COLOR[b.status] }}>● </span>
-                        {b.concept}
-                      </td>
-                      <td>{b.minutes} min</td>
-                      <td className="muted">{b.action}</td>
+                  {plan.data.blocks.map((block, index) => (
+                    <tr key={block.concept_id}>
+                      <td>{index + 1}</td>
+                      <td><span style={{ color: STATUS_COLOR[block.status] }}>● </span>{block.concept}</td>
+                      <td>{block.minutes} min</td>
+                      <td className="muted">{block.action}</td>
                     </tr>
                   ))}
                 </tbody>

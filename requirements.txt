@@ -11,6 +11,7 @@ SQLAlchemy==2.0.36
 PyYAML==6.0.2
 python-frontmatter==1.1.0
 PyMuPDF==1.25.1
+python-pptx==1.0.2
 Pillow==11.0.0
 
 # HTTP client (LM Studio adapter, later phases)

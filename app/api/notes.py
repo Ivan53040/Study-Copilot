@@ -14,6 +14,8 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 
 class NoteRequest(BaseModel):
     course: str | None = None
+    scope_path: str | None = None
+    scope_name: str | None = None
     week: int | None = None
     topic: str | None = None
     # Preview by default; set write=true to save into StudyCopilot/.
@@ -22,8 +24,8 @@ class NoteRequest(BaseModel):
 
     @model_validator(mode="after")
     def _need_a_scope(self):
-        if not (self.course or self.topic):
-            raise ValueError("Provide at least a course or a topic.")
+        if not (self.course or self.scope_path or self.topic):
+            raise ValueError("Provide at least a vault scope or a topic.")
         return self
 
 
@@ -34,6 +36,8 @@ def post_generate(
     try:
         preview = generate_revision_note(
             course=req.course,
+            scope_path=req.scope_path,
+            scope_name=req.scope_name,
             week=req.week,
             topic=req.topic,
             settings=settings,

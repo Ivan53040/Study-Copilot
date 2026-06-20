@@ -76,6 +76,17 @@ class GenerationConfig(BaseModel):
     require_citations: bool = True
 
 
+class LecturesConfig(BaseModel):
+    """Folder that holds lecture PDFs / PowerPoint files."""
+
+    root: Path | None = None
+
+    @field_validator("root")
+    @classmethod
+    def _expand_root(cls, v: Path | None) -> Path | None:
+        return Path(os.path.expanduser(str(v))) if v is not None else None
+
+
 class WorkspaceConfig(BaseModel):
     """Standalone note-workspace settings (browse/edit the whole vault)."""
 
@@ -112,6 +123,7 @@ class SyncConfig(BaseModel):
 
 class Settings(BaseModel):
     vault: VaultConfig
+    lectures: LecturesConfig = Field(default_factory=LecturesConfig)
     external_sources: list[ExternalSource] = Field(default_factory=list)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
