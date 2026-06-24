@@ -1,0 +1,18 @@
+{
+  "description": "Seed retrieval eval for REIT6811. expected_keywords are terms a good top-k retrieval should surface in chunk content. Extend over time.",
+  "course": "REIT6811",
+  "queries": [
+    {"id": "reliability-validity", "query": "difference between reliability and validity", "expected_keywords": ["reliability", "validity"]},
+    {"id": "informed-consent", "query": "informed consent requirements in research", "expected_keywords": ["consent"]},
+    {"id": "research-ethics", "query": "ethical considerations in research", "expected_keywords": ["ethic"]},
+    {"id": "qualitative-quantitative", "query": "qualitative versus quantitative research", "expected_keywords": ["qualitative", "quantitative"]},
+    {"id": "sampling", "query": "sampling methods and strategies", "expected_keywords": ["sampl"]},
+    {"id": "hypothesis", "query": "research question and hypothesis", "expected_keywords": ["hypothesis"]},
+    {"id": "data-collection", "query": "methods of data collection", "expected_keywords": ["data"]},
+    {"id": "literature-review", "query": "purpose of a literature review", "expected_keywords": ["literature"]},
+    {"id": "survey", "query": "designing a survey questionnaire", "expected_keywords": ["survey"]},
+    {"id": "research-design", "query": "choosing a research design", "expected_keywords": ["research design", "design"]},
+    {"id": "data-analysis", "query": "analysing research data", "expected_keywords": ["analysis"]},
+    {"id": "bias", "query": "sources of bias in research", "expected_keywords": ["bias"]}
+  ]
+}

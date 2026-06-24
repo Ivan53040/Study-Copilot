@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.local
+.vite/
+
+# tsc -b build artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Tauri / Rust build output
+src-tauri/target/
+src-tauri/gen/

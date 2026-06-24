@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Local config / secrets
+.env
+
+# App data (SQLite db, vector store, indexes)
+data/
+*.db
+*.sqlite3
+
+# Generated eval output (report.md is committed as a snapshot)
+evals/report.json
+
+# Frontend and Tauri build output
+frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri/target-bundle/
+
+# OS
+.DS_Store
+Thumbs.db

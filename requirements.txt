@@ -1,0 +1,28 @@
+# Web / API
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Persistence
+SQLAlchemy==2.0.36
+
+# Config / parsing
+PyYAML==6.0.2
+python-frontmatter==1.1.0
+PyMuPDF==1.25.1
+python-pptx==1.0.2
+Pillow==11.0.0
+
+# HTTP client (LM Studio adapter, later phases)
+httpx==0.28.1
+
+# Vector math for retrieval
+numpy==2.2.1
+
+# Markdown -> HTML for PDF export
+markdown==3.7
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
