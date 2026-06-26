@@ -47,14 +47,22 @@ _FTS_SQL = [
 
 
 def _ensure_fts(engine: Engine) -> None:
-    """Create the FTS5 table/triggers and (re)sync from chunks."""
+    """Create the FTS5 table/triggers and sync from chunks only when needed.
+
+    The triggers keep the index in step with every insert/update/delete, so a
+    full ``rebuild`` is only required the first time the table is created (or if
+    the index has drifted out of sync). Comparing row counts avoids an O(corpus)
+    rebuild on every startup.
+    """
     if not engine.url.get_backend_name().startswith("sqlite"):
         return
     with engine.begin() as conn:
         for stmt in _FTS_SQL:
             conn.execute(text(stmt))
-        # Rebuild from the content table so pre-existing chunks get indexed.
-        conn.execute(text("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')"))
+        chunk_count = conn.execute(text("SELECT count(*) FROM chunks")).scalar() or 0
+        fts_count = conn.execute(text("SELECT count(*) FROM chunks_fts")).scalar() or 0
+        if chunk_count != fts_count:
+            conn.execute(text("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')"))
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None

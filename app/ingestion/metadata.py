@@ -104,7 +104,7 @@ def _infer_source_type(document_type: str, ext: str, hint: str | None) -> str:
     if hint:
         return hint
     # PDFs of past papers/exams are official material.
-    if document_type in {"past-paper"} or (ext == ".pdf"):
+    if document_type == "past-paper" or ext == ".pdf":
         return "past-paper"
     if document_type == "marking-guide":
         return "marking-guide"

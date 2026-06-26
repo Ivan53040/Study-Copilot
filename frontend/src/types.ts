@@ -278,14 +278,39 @@ export interface Health {
   external_sources: number;
 }
 
+export type ChatProvider = "lmstudio" | "openai" | "anthropic" | "echo";
+
 export interface AppSettings {
   vault_root: string;
   vault_exists: boolean;
   lectures_root: string | null;
   lectures_root_exists: boolean | null;
-  default_provider: "lmstudio" | "echo";
+  default_provider: ChatProvider;
   llm_base_url: string;
   llm_model: string;
+  openai_base_url: string;
+  openai_model: string;
+  anthropic_model: string;
+  openai_key_set: boolean;
+  anthropic_key_set: boolean;
+  embedding_provider: "lmstudio" | "hash";
+  embedding_base_url: string | null;
+  embedding_model: string;
+  temperature: number;
+  require_citations: boolean;
+}
+
+/** The editable subset sent to PUT /settings (status fields are server-derived). */
+export interface SettingsPayload {
+  vault_root: string;
+  lectures_root: string | null;
+  default_provider: ChatProvider;
+  llm_base_url: string;
+  llm_model: string;
+  openai_base_url: string;
+  openai_model: string;
+  anthropic_model: string;
+  api_key?: string | null;
   embedding_provider: "lmstudio" | "hash";
   embedding_base_url: string | null;
   embedding_model: string;

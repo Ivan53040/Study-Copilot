@@ -41,14 +41,41 @@ class LMStudioConfig(BaseModel):
     model: str = "local-model"
 
 
+class OpenAIConfig(BaseModel):
+    """Cloud OpenAI (or any OpenAI-compatible gateway: OpenRouter, Groq, …).
+
+    The API key is read from the environment (``api_key_env``), never stored in
+    the config file.
+    """
+
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    api_key_env: str = "OPENAI_API_KEY"
+
+
+class AnthropicConfig(BaseModel):
+    """Cloud Anthropic (Claude). Uses the official ``anthropic`` SDK.
+
+    The API key is read from the environment (``api_key_env``), never stored in
+    the config file.
+    """
+
+    model: str = "claude-opus-4-8"
+    api_key_env: str = "ANTHROPIC_API_KEY"
+    max_tokens: int = 4096
+
+
 class CloudFallbackConfig(BaseModel):
     enabled: bool = False
     require_approval: bool = True
 
 
 class ModelsConfig(BaseModel):
+    # "lmstudio" (local, default), "openai", "anthropic", or "echo" (offline test).
     default_provider: str = "lmstudio"
     lmstudio: LMStudioConfig = Field(default_factory=LMStudioConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     cloud_fallback: CloudFallbackConfig = Field(default_factory=CloudFallbackConfig)
 
 
@@ -92,6 +119,8 @@ class WorkspaceConfig(BaseModel):
 
     allow_edit: bool = True
     backup_on_edit: bool = True
+    # Keep at most this many automatic backups per note (0 = keep all).
+    max_backups_per_note: int = 20
     editable_extensions: list[str] = Field(
         default_factory=lambda: [".md", ".markdown", ".txt"]
     )
@@ -143,6 +172,22 @@ def _default_config_path() -> Path:
     return Path(os.environ.get("STUDY_COPILOT_CONFIG", "config.yaml"))
 
 
+def _load_env_file(directory: Path) -> None:
+    """Load cloud API keys from a sibling ``.env`` (real env vars still win).
+
+    Keys (OPENAI_API_KEY / ANTHROPIC_API_KEY) are kept out of the committed
+    ``config.yaml``; the desktop Settings screen writes them here instead.
+    """
+    env_path = directory / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - dotenv ships with uvicorn[standard]
+        return
+    load_dotenv(env_path, override=False)
+
+
 def load_settings(config_path: str | Path | None = None) -> Settings:
     """Load and validate settings from a YAML file."""
     path = Path(config_path) if config_path else _default_config_path()
@@ -151,6 +196,7 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
             f"Config file not found: {path.resolve()}. "
             "Copy config.yaml and set STUDY_COPILOT_CONFIG if needed."
         )
+    _load_env_file(path.resolve().parent)
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return Settings.model_validate(data)

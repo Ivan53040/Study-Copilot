@@ -15,10 +15,20 @@ external_sources:
   course: REIT6811
   source_type: past-paper
 models:
+  # Switch the chat model here: lmstudio (local, default) | openai | anthropic | echo.
+  # Cloud providers read their API key from the environment (see .env.example).
   default_provider: lmstudio
   lmstudio:
     base_url: http://127.0.0.1:1234/v1
     model: local-model
+  # openai:                              # or any OpenAI-compatible gateway
+  #   base_url: https://api.openai.com/v1
+  #   model: gpt-4o-mini
+  #   api_key_env: OPENAI_API_KEY
+  # anthropic:                           # Claude (needs `pip install anthropic`)
+  #   model: claude-opus-4-8
+  #   api_key_env: ANTHROPIC_API_KEY
+  #   max_tokens: 4096
   cloud_fallback:
     enabled: false
     require_approval: true

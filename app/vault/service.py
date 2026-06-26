@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,24 +39,41 @@ _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _WIKILINK_RE = re.compile(r"\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]")
 _BACKUP_DIR = "StudyCopilot/_backups"
 
+# Cached name-index + outgoing-links-per-note for the whole vault, so opening a
+# note doesn't re-read every other note. Invalidated by a cheap stat signature.
+_GRAPH_LOCK = threading.Lock()
+_GRAPH_CACHE: dict = {"root": None, "sig": None, "index": {}, "outlinks": {}}
+
 
 def _vault_root(settings: Settings) -> Path:
     return Path(settings.vault.root).expanduser().resolve()
 
 
+def _visible_dirs(dirpath: str, dirnames: list[str], settings: Settings) -> list[str]:
+    """Subdirectories worth descending into: skip hidden and denied folders."""
+    return [
+        d
+        for d in dirnames
+        if not d.startswith(".") and not is_denied(Path(dirpath) / d, settings)
+    ]
+
+
+def _is_note_file(p: Path, settings: Settings) -> bool:
+    """A visible, allowed file with a recognised note extension."""
+    return (
+        not p.name.startswith(".")
+        and p.suffix.lower() in NOTE_EXTS
+        and not is_denied(p, settings)
+    )
+
+
 def _iter_notes(settings: Settings):
     root = _vault_root(settings)
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if not d.startswith(".") and not is_denied(Path(dirpath) / d, settings)
-        ]
+        dirnames[:] = _visible_dirs(dirpath, dirnames, settings)
         for name in filenames:
-            if name.startswith("."):
-                continue
             p = Path(dirpath) / name
-            if p.suffix.lower() in NOTE_EXTS and not is_denied(p, settings):
+            if _is_note_file(p, settings):
                 yield p, p.relative_to(root).as_posix()
 
 
@@ -116,19 +134,13 @@ def list_tree(settings: Settings | None = None) -> dict:
         return node
 
     for dirpath, dirnames, filenames in os.walk(root_path):
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if not d.startswith(".") and not is_denied(Path(dirpath) / d, settings)
-        ]
+        dirnames[:] = _visible_dirs(dirpath, dirnames, settings)
         rel_dir = Path(dirpath).relative_to(root_path).as_posix()
         rel_dir = "" if rel_dir == "." else rel_dir
         folder = ensure_folder(rel_dir)
         for name in filenames:
-            if name.startswith("."):
-                continue
             p = Path(dirpath) / name
-            if p.suffix.lower() in NOTE_EXTS and not is_denied(p, settings):
+            if _is_note_file(p, settings):
                 folder["children"][name] = {
                     "name": name,
                     "path": p.relative_to(root_path).as_posix(),
@@ -164,6 +176,43 @@ def _note_index(settings: Settings) -> dict[str, str]:
     return index
 
 
+def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Return ``(name_index, outgoing_links_per_note)`` for the whole vault.
+
+    Cached and invalidated by a stat signature (path + mtime + size of every
+    note), so repeat opens do a stat-only walk instead of reading every note's
+    content each time.
+    """
+    root = str(_vault_root(settings))
+    entries: list[tuple[str, Path, int, int]] = []
+    for path, rel in _iter_notes(settings):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append((rel, path, stat.st_mtime_ns, stat.st_size))
+    signature = tuple(sorted((rel, mtime, size) for rel, _p, mtime, size in entries))
+
+    with _GRAPH_LOCK:
+        if _GRAPH_CACHE["root"] == root and _GRAPH_CACHE["sig"] == signature:
+            return _GRAPH_CACHE["index"], _GRAPH_CACHE["outlinks"]
+
+    index: dict[str, str] = {}
+    outlinks: dict[str, list[str]] = {}
+    for rel, path, _mtime, _size in entries:
+        index.setdefault(Path(rel).stem.lower(), rel)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            outlinks[rel] = []
+            continue
+        outlinks[rel] = extract_links(text)
+
+    with _GRAPH_LOCK:
+        _GRAPH_CACHE.update(root=root, sig=signature, index=index, outlinks=outlinks)
+    return index, outlinks
+
+
 def read_note(relpath: str, settings: Settings | None = None) -> dict:
     settings = settings or get_settings()
     abs_path = assert_workspace_readable(_vault_root(settings) / relpath, settings)
@@ -177,24 +226,19 @@ def read_note(relpath: str, settings: Settings | None = None) -> dict:
     except Exception:
         meta, body = {}, raw
 
-    links = extract_links(raw)
-    index = _note_index(settings)
+    index, outlinks = _link_graph(settings)
+    # Resolve this note's outgoing links from its freshly-read content.
     resolved = [
-        {"name": n, "path": index.get(n.lower())} for n in links
+        {"name": n, "path": index.get(n.lower())} for n in extract_links(raw)
     ]
 
-    # Backlinks: any note whose body links to this note's name.
+    # Backlinks: any other note whose body links to this note's name.
     this_stem = Path(relpath).stem.lower()
-    backlinks: list[dict] = []
-    for p, rel in _iter_notes(settings):
-        if rel == relpath:
-            continue
-        try:
-            other = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if any(l.lower() == this_stem for l in extract_links(other)):
-            backlinks.append({"path": rel, "title": Path(rel).stem})
+    backlinks: list[dict] = [
+        {"path": rel, "title": Path(rel).stem}
+        for rel, targets in outlinks.items()
+        if rel != relpath and any(t.lower() == this_stem for t in targets)
+    ]
 
     return {
         "path": relpath,
@@ -209,23 +253,40 @@ def read_note(relpath: str, settings: Settings | None = None) -> dict:
     }
 
 
+def _prune_backups(backup_dir: Path, note_name: str, settings: Settings) -> None:
+    """Keep only the newest ``max_backups_per_note`` ``.bak`` files for a note."""
+    keep = settings.workspace.max_backups_per_note
+    if keep <= 0:  # 0 (or negative) means unlimited history
+        return
+    backups = sorted(
+        backup_dir.glob(f"{note_name}.*.bak"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in backups[keep:]:
+        try:
+            stale.unlink()
+        except OSError:
+            logger.warning("Could not prune old backup %s", stale)
+
+
 def write_note(
     relpath: str, content: str, settings: Settings | None = None
 ) -> dict:
     settings = settings or get_settings()
-    abs_path = assert_workspace_writable(_vault_root(settings) / relpath, settings)
+    root = _vault_root(settings)
+    abs_path = assert_workspace_writable(root / relpath, settings)
 
     backup_path = None
     if settings.workspace.backup_on_edit and abs_path.exists():
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-        backup = (
-            _vault_root(settings) / _BACKUP_DIR / f"{relpath}.{stamp}.bak"
-        )
+        backup = root / _BACKUP_DIR / f"{relpath}.{stamp}.bak"
         backup.parent.mkdir(parents=True, exist_ok=True)
         backup.write_text(
             abs_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
         )
         backup_path = str(backup)
+        _prune_backups(backup.parent, Path(relpath).name, settings)
 
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_text(content, encoding="utf-8")
@@ -467,7 +528,7 @@ def delete_note(relpath: str, settings: Settings | None = None) -> dict:
     elif not settings.workspace.allow_edit or not is_in_vault(src, settings):
         raise PathSecurityError(f"Folder not editable: {relpath}")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-    dest = root / "StudyCopilot" / "_backups" / "_deleted" / f"{relpath}.{stamp}"
+    dest = root / _BACKUP_DIR / "_deleted" / f"{relpath}.{stamp}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
     logger.info("Deleted path %s (backup %s)", relpath, dest)

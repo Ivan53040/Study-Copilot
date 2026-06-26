@@ -44,6 +44,23 @@ def test_keyword_search_finds_content(settings, db):
     assert any("Reliability" in h.content or h.heading == "Reliability" for h in hits)
 
 
+def test_fts_index_survives_reinit(settings, db):
+    # _ensure_fts now rebuilds only on drift; re-running init_db must keep the
+    # index in sync (not wipe or duplicate it) and keep search working.
+    from sqlalchemy import text
+
+    from app.database.db import init_db
+
+    ingest(settings)
+    init_db(settings)  # runs _ensure_fts again
+    with session_scope(settings) as s:
+        chunks = s.execute(text("SELECT count(*) FROM chunks")).scalar()
+        indexed = s.execute(text("SELECT count(*) FROM chunks_fts")).scalar()
+        hits = keyword_search(s, "reliability", limit=5)
+    assert chunks == indexed
+    assert hits
+
+
 def test_keyword_search_metadata_filter(settings, db):
     ingest(settings)
     with session_scope(settings) as s:

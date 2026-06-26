@@ -18,6 +18,7 @@ import type {
   PastPaperQuestion,
   QuizResult,
   SearchResponse,
+  SettingsPayload,
   SubmitResult,
   TreeNode,
   VaultScope,
@@ -66,7 +67,7 @@ export const api = {
 
   settings: () => request<AppSettings>("/settings"),
 
-  saveSettings: (body: Omit<AppSettings, "vault_exists" | "lectures_root_exists">) =>
+  saveSettings: (body: SettingsPayload) =>
     request<{ saved: boolean; settings: AppSettings }>("/settings", {
       method: "PUT",
       body: JSON.stringify(body),

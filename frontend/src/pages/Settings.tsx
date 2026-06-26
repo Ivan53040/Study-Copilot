@@ -113,6 +113,8 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   const [appearance, setAppearance] = useState(loadAppearance);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // Write-only: typed here, sent on save, never returned by the backend.
+  const [apiKey, setApiKey] = useState("");
 
   const chooseLecturesFolder = async () => {
     setMessage("");
@@ -187,6 +189,10 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         default_provider: settings.default_provider,
         llm_base_url: settings.llm_base_url,
         llm_model: settings.llm_model,
+        openai_base_url: settings.openai_base_url,
+        openai_model: settings.openai_model,
+        anthropic_model: settings.anthropic_model,
+        api_key: apiKey.trim() || null,
         embedding_provider: settings.embedding_provider,
         embedding_base_url: settings.embedding_base_url,
         embedding_model: settings.embedding_model,
@@ -194,6 +200,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         require_citations: settings.require_citations,
       });
       setSettings(result.settings);
+      setApiKey("");
       setMessage("Settings saved. Indexing the whole vault…");
       const scan = await api.scanVault();
       setMessage(
@@ -280,7 +287,10 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       <section className="settings-section card">
         <div>
           <h2>Language model</h2>
-          <p className="muted">OpenAI-compatible local endpoints such as LM Studio are supported.</p>
+          <p className="muted">
+            Run a local model with LM Studio, or use a cloud provider (OpenAI or Claude).
+            Cloud keys are stored in a local <code>.env</code> file, never in the synced config.
+          </p>
         </div>
         <div className="settings-grid">
           <label className="field">
@@ -289,29 +299,87 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
               value={settings.default_provider}
               onChange={(e) => setSettings({ ...settings, default_provider: e.target.value as AppSettings["default_provider"] })}
             >
-              <option value="lmstudio">LM Studio / OpenAI compatible</option>
+              <option value="lmstudio">LM Studio (local)</option>
+              <option value="openai">OpenAI (GPT)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
               <option value="echo">Offline echo (testing)</option>
             </select>
           </label>
-          <label className="field">
-            <span>Model</span>
-            <input value={settings.llm_model} onChange={(e) => setSettings({ ...settings, llm_model: e.target.value })} />
-          </label>
-          <label className="field field-wide">
-            <span>Base URL</span>
-            <input value={settings.llm_base_url} onChange={(e) => setSettings({ ...settings, llm_base_url: e.target.value })} />
-          </label>
-          <label className="field">
-            <span>Temperature</span>
-            <input type="number" min="0" max="2" step="0.1" value={settings.temperature} onChange={(e) => setSettings({ ...settings, temperature: Number(e.target.value) })} />
-          </label>
+
+          {settings.default_provider === "lmstudio" && (
+            <>
+              <label className="field">
+                <span>Model</span>
+                <input value={settings.llm_model} onChange={(e) => setSettings({ ...settings, llm_model: e.target.value })} />
+              </label>
+              <label className="field field-wide">
+                <span>Base URL</span>
+                <input value={settings.llm_base_url} onChange={(e) => setSettings({ ...settings, llm_base_url: e.target.value })} />
+              </label>
+            </>
+          )}
+
+          {settings.default_provider === "openai" && (
+            <>
+              <label className="field">
+                <span>Model</span>
+                <input value={settings.openai_model} onChange={(e) => setSettings({ ...settings, openai_model: e.target.value })} placeholder="gpt-4o-mini" />
+              </label>
+              <label className="field field-wide">
+                <span>Base URL</span>
+                <input value={settings.openai_base_url} onChange={(e) => setSettings({ ...settings, openai_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
+              </label>
+              <label className="field field-wide">
+                <span>API key</span>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={settings.openai_key_set ? "Key saved — leave blank to keep it" : "Paste your OpenAI API key"}
+                />
+                <small className={settings.openai_key_set ? "good-text" : "muted"}>
+                  {settings.openai_key_set ? "A key is saved for OpenAI." : "No key saved yet — required for cloud calls."}
+                </small>
+              </label>
+            </>
+          )}
+
+          {settings.default_provider === "anthropic" && (
+            <>
+              <label className="field">
+                <span>Model</span>
+                <input value={settings.anthropic_model} onChange={(e) => setSettings({ ...settings, anthropic_model: e.target.value })} placeholder="claude-opus-4-8" />
+              </label>
+              <label className="field field-wide">
+                <span>API key</span>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={settings.anthropic_key_set ? "Key saved — leave blank to keep it" : "Paste your Anthropic API key"}
+                />
+                <small className={settings.anthropic_key_set ? "good-text" : "muted"}>
+                  {settings.anthropic_key_set ? "A key is saved for Claude." : "No key saved yet — required for cloud calls. Run `pip install anthropic` once."}
+                </small>
+              </label>
+            </>
+          )}
+
+          {settings.default_provider !== "echo" && (
+            <label className="field">
+              <span>Temperature</span>
+              <input type="number" min="0" max="2" step="0.1" value={settings.temperature} onChange={(e) => setSettings({ ...settings, temperature: Number(e.target.value) })} />
+            </label>
+          )}
           <label className="check-field">
             <input type="checkbox" checked={settings.require_citations} onChange={(e) => setSettings({ ...settings, require_citations: e.target.checked })} />
             Require source citations
           </label>
-          <button type="button" onClick={testConnection} disabled={busy || settings.default_provider === "echo"}>
-            Test connection
-          </button>
+          {settings.default_provider === "lmstudio" && (
+            <button type="button" onClick={testConnection} disabled={busy}>
+              Test connection
+            </button>
+          )}
         </div>
       </section>
 
