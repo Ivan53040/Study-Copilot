@@ -107,7 +107,11 @@ _VIEWABLE_EXTENSIONS = {".pdf", ".pptx", ".ppt"}
 def import_lecture_folder(
     body: ImportFolderRequest, settings: Settings = Depends(get_settings)
 ) -> dict:
-    source = Path(body.folder_path).expanduser().resolve()
+    return import_folder_impl(body.folder_path, settings)
+
+
+def import_folder_impl(folder_path: str, settings: Settings) -> dict:
+    source = Path(folder_path).expanduser().resolve()
     if not source.is_dir():
         raise HTTPException(status_code=400, detail="Not a directory")
 

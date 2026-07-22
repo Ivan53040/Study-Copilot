@@ -1,17 +1,21 @@
 import type {
   AnalyzeReport,
   AppSettings,
+  BacklinkSearchResponse,
   ChatResponse,
   ConceptProgress,
   CourseSummary,
   DailyPlan,
   DocumentRow,
   Health,
+  Job,
   LectureDocument,
   LecturePreview,
   LectureViewer,
   FormatPreview,
+  NoteMentions,
   NotePreview,
+  NoteTranslation,
   NoteVersion,
   OrganizerMove,
   OrganizerPreview,
@@ -19,11 +23,20 @@ import type {
   QuizResult,
   SearchResponse,
   SettingsPayload,
+  StudySet,
+  StudySetItem,
   SubmitResult,
+  TranslatedNoteResult,
+  TransformationTemplate,
   TreeNode,
   VaultScope,
   VaultGraph,
   VaultNote,
+  VoiceNoteResult,
+  VoiceNoteStatus,
+  VoiceTranscriptionResult,
+  WikiGraph,
+  WikiPagesResponse,
 } from "./types";
 
 // Calls go through the Vite proxy (/api -> backend). Override with VITE_API_BASE.
@@ -44,6 +57,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       });
     } catch (e) {
       lastErr = e; // network error (backend not up yet) -> retry
+      await sleep(700);
+      continue;
+    }
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.detail ?? JSON.stringify(body);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status}: ${detail}`);
+    }
+    return res.json() as Promise<T>;
+  }
+  throw new Error(`Cannot reach backend: ${(lastErr as Error)?.message ?? "network error"}`);
+}
+
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        method: "POST",
+        body: form,
+      });
+    } catch (e) {
+      lastErr = e;
       await sleep(700);
       continue;
     }
@@ -85,6 +127,32 @@ export const api = {
 
   courses: () => request<{ courses: CourseSummary[] }>("/courses"),
   scopes: () => request<{ scopes: VaultScope[] }>("/scopes"),
+
+  studySets: () => request<{ study_sets: StudySet[] }>("/study-sets"),
+
+  saveStudySet: (body: {
+    name: string;
+    course?: string | null;
+    scope_path?: string | null;
+    items: StudySetItem[];
+  }, id?: number) =>
+    request<StudySet>(id ? `/study-sets/${id}` : "/study-sets", {
+      method: id ? "PUT" : "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteStudySet: (id: number) =>
+    request<{ deleted: number }>(`/study-sets/${id}`, { method: "DELETE" }),
+
+  jobs: () => request<{ jobs: Job[] }>("/jobs"),
+
+  job: (id: number) => request<Job>(`/jobs/${id}`),
+
+  createJob: (type: string, payload: Record<string, unknown> = {}) =>
+    request<Job>("/jobs", {
+      method: "POST",
+      body: JSON.stringify({ type, payload }),
+    }),
 
   scanVault: () =>
     request<{
@@ -131,6 +199,7 @@ export const api = {
     query: string;
     course?: string | null;
     scope_path?: string | null;
+    study_set_id?: number | null;
     source_type?: string | null;
     max_trust_level?: number | null;
     week?: number | null;
@@ -146,6 +215,9 @@ export const api = {
     message: string;
     course?: string | null;
     scope_path?: string | null;
+    study_set_id?: number | null;
+    context_mode?: "retrieval" | "manual" | "hybrid";
+    context_items?: StudySetItem[];
     conversation_id?: number | null;
   }) =>
     request<ChatResponse>("/chat", {
@@ -157,6 +229,7 @@ export const api = {
     course?: string | null;
     scope_path?: string | null;
     scope_name?: string | null;
+    study_set_id?: number | null;
     week?: number | null;
     topic?: string | null;
     write?: boolean;
@@ -166,10 +239,63 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  voiceNoteStatus: () => request<VoiceNoteStatus>("/voice-notes/status"),
+
+  transcribeVoiceNote: (body: {
+    audio: Blob;
+    filename: string;
+  }) => {
+    const form = new FormData();
+    form.append("audio", body.audio, body.filename);
+    return requestForm<VoiceTranscriptionResult>("/voice-notes/transcribe", form);
+  },
+
+  generateVoiceNoteFromTranscript: (body: {
+    transcript: string;
+    title?: string | null;
+    course?: string | null;
+    folder?: string | null;
+    write?: boolean;
+  }) =>
+    request<VoiceNoteResult>("/voice-notes/generate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  createVoiceNote: (body: {
+    audio: Blob;
+    filename: string;
+    title?: string | null;
+    course?: string | null;
+    folder?: string | null;
+    write?: boolean;
+  }) => {
+    const form = new FormData();
+    form.append("audio", body.audio, body.filename);
+    if (body.title) form.append("title", body.title);
+    if (body.course) form.append("course", body.course);
+    if (body.folder) form.append("folder", body.folder);
+    form.append("write", String(body.write ?? true));
+    return requestForm<VoiceNoteResult>("/voice-notes", form);
+  },
+
+  translateNoteText: (body: { text: string; context?: string | null }) =>
+    request<NoteTranslation>("/notes/translate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  translateWholeNote: (path: string, background = true) =>
+    request<TranslatedNoteResult>("/notes/translate-note", {
+      method: "POST",
+      body: JSON.stringify({ path, background }),
+    }),
+
   generateQuiz: (body: {
     course?: string | null;
     scope_path?: string | null;
     scope_name?: string | null;
+    study_set_id?: number | null;
     week?: number | null;
     topic?: string | null;
     num_questions?: number;
@@ -192,6 +318,7 @@ export const api = {
 
   dailyPlan: (body: {
     course?: string | null;
+    study_set_id?: number | null;
     available_minutes?: number;
     exam_date?: string | null;
     write?: boolean;
@@ -216,6 +343,7 @@ export const api = {
     course?: string | null;
     scope_path?: string | null;
     scope_name?: string | null;
+    study_set_id?: number | null;
     week?: number | null;
     topic?: string | null;
     num_questions?: number;
@@ -268,13 +396,66 @@ export const api = {
 
   vaultGraph: () => request<VaultGraph>("/vault/graph"),
 
+  vaultBacklinks: (path: string, aliases: string[] = []) => {
+    const params = new URLSearchParams({ path });
+    aliases.filter(Boolean).forEach((alias) => params.append("alias", alias));
+    return request<NoteMentions>(`/vault/backlinks?${params.toString()}`);
+  },
+
+  vaultBacklinkSearch: (q: string) =>
+    request<BacklinkSearchResponse>(
+      `/vault/backlinks/search?q=${encodeURIComponent(q)}`,
+    ),
+
+  vaultBacklinkReview: (path: string, aliases: string[] = []) =>
+    request<NoteMentions>("/vault/backlinks/review", {
+      method: "POST",
+      body: JSON.stringify({ path, aliases }),
+    }),
+
+  vaultLinkMention: (body: {
+    source_path: string;
+    target_path: string;
+    line: number;
+    start: number;
+    end: number;
+    aliases?: string[];
+  }) =>
+    request<{ path: string; written: boolean; link: string }>(
+      "/vault/backlinks/link",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  wikiBacklinkReview: (course?: string | null) =>
+    request<Job>("/wiki/backlinks/review", {
+      method: "POST",
+      body: JSON.stringify({ course: course ?? null }),
+    }),
+
+  wikiBuild: (body: {
+    course?: string | null;
+    scope_path?: string | null;
+    name?: string | null;
+    force?: boolean;
+  }) => request<Job>("/wiki/build", { method: "POST", body: JSON.stringify(body) }),
+
+  wikiPages: (course?: string | null) =>
+    request<WikiPagesResponse>(
+      `/wiki/pages${course ? `?course=${encodeURIComponent(course)}` : ""}`,
+    ),
+
+  wikiGraph: (course?: string | null) =>
+    request<WikiGraph>(
+      `/wiki/graph${course ? `?course=${encodeURIComponent(course)}` : ""}`,
+    ),
+
   vaultSearch: (q: string) =>
     request<{ results: { path: string; title: string }[] }>(
       `/vault/search?q=${encodeURIComponent(q)}`,
     ),
 
   vaultRename: (from_path: string, to_path: string) =>
-    request<{ from: string; to: string }>("/vault/rename", {
+    request<{ from: string; to: string; links_updated: number }>("/vault/rename", {
       method: "POST",
       body: JSON.stringify({ from_path, to_path }),
     }),
@@ -345,5 +526,31 @@ export const api = {
     request<{ pdf: string }>("/vault/export-pdf", {
       method: "POST",
       body: JSON.stringify({ path }),
+    }),
+
+  transformationTemplates: () =>
+    request<{ templates: TransformationTemplate[] }>("/transformations/templates"),
+
+  runTransformation: (body: {
+    template_id: number;
+    target_kind: "document" | "vault_note" | "study_set";
+    target_ref?: string | null;
+    study_set_id?: number | null;
+  }) =>
+    request<{ run: Record<string, unknown>; job: Job }>("/transformations/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deepAsk: (body: {
+    question: string;
+    course?: string | null;
+    scope_path?: string | null;
+    study_set_id?: number | null;
+    max_searches?: number;
+  }) =>
+    request<Job>("/ask/deep", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 };

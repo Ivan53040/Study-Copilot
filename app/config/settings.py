@@ -89,6 +89,14 @@ class EmbeddingsConfig(BaseModel):
     hash_dim: int = 256
 
 
+class IngestionConfig(BaseModel):
+    # Approximate-token chunking; keeps old citation metadata but avoids
+    # model-context surprises from purely character-based chunks.
+    chunk_tokens: int = 360
+    chunk_overlap_tokens: int = 50
+    min_chunk_tokens: int = 4
+
+
 class RetrievalConfig(BaseModel):
     keyword_limit: int = 20
     vector_limit: int = 20
@@ -103,6 +111,45 @@ class GenerationConfig(BaseModel):
     require_citations: bool = True
 
 
+class TaskModelOverride(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+
+
+class TaskModelsConfig(BaseModel):
+    chat: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    deep_ask: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    transformations: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    quiz_marking: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    translation: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    voice_notes: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    wiki: TaskModelOverride = Field(default_factory=TaskModelOverride)
+
+
+class WikiConfig(BaseModel):
+    """LLM-built wiki of interlinked entity/concept pages in the vault."""
+
+    # Vault-relative root; per-course wikis live in subfolders.
+    root: str = "StudyCopilot/Wiki"
+    # Cap on entity/concept pages the LLM may emit per source document.
+    max_pages_per_source: int = 6
+    # Clipping budgets (characters) to keep prompts inside local context windows.
+    max_source_chars: int = 24000
+    max_index_chars: int = 8000
+    max_existing_page_chars: int = 3000
+    # Communities with cohesion below this are flagged as sparse knowledge areas.
+    min_cohesion: float = 0.15
+    # Re-ask the model this many times when it returns unparseable JSON.
+    json_retries: int = 1
+    # Long-running source builds can exceed normal chat latency, especially
+    # when the local model server queues several concurrent requests.
+    chat_timeout_seconds: float = 900.0
+    # Sources processed in parallel (match the LLM server's concurrency;
+    # LM Studio default is 4). Writes are serialized regardless.
+    max_concurrent_sources: int = 4
+
+
 class LecturesConfig(BaseModel):
     """Folder that holds lecture PDFs / PowerPoint files."""
 
@@ -111,6 +158,24 @@ class LecturesConfig(BaseModel):
     @field_validator("root")
     @classmethod
     def _expand_root(cls, v: Path | None) -> Path | None:
+        return Path(os.path.expanduser(str(v))) if v is not None else None
+
+
+class VoiceNotesConfig(BaseModel):
+    """Local speech-to-text settings for uploaded or recorded voice notes."""
+
+    enabled: bool = True
+    whisper_model_path: Path | None = None
+    whisper_cli_path: str = "whisper-cli"
+    ffmpeg_path: str = "ffmpeg"
+    audio_root: Path = Path("./data/voice_notes")
+    keep_audio: bool = False
+    language: str = "auto"
+    max_upload_mb: int = 250
+
+    @field_validator("whisper_model_path", "audio_root")
+    @classmethod
+    def _expand_path(cls, v: Path | None) -> Path | None:
         return Path(os.path.expanduser(str(v))) if v is not None else None
 
 
@@ -153,13 +218,17 @@ class SyncConfig(BaseModel):
 class Settings(BaseModel):
     vault: VaultConfig
     lectures: LecturesConfig = Field(default_factory=LecturesConfig)
+    voice_notes: VoiceNotesConfig = Field(default_factory=VoiceNotesConfig)
     external_sources: list[ExternalSource] = Field(default_factory=list)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
+    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    task_models: TaskModelsConfig = Field(default_factory=TaskModelsConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
+    wiki: WikiConfig = Field(default_factory=WikiConfig)
     database_url: str = "sqlite:///./data/study_copilot.db"
 
     @property

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import { autocompletion, type CompletionContext } from "@codemirror/autocomplete";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { keymap, EditorView } from "@codemirror/view";
@@ -27,6 +28,7 @@ interface MarkdownEditorProps {
     extractedContent: string,
     updatedDocument: string,
   ) => Promise<boolean>;
+  linkTargets?: string[];
 }
 
 type Submenu = "format" | "paragraph" | "insert" | null;
@@ -46,12 +48,15 @@ export function MarkdownEditor({
   onOpenInternal,
   onBookmarkHeading,
   onExtractHeading,
+  linkTargets,
 }: MarkdownEditorProps) {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const saveRef = useRef(onSave);
   const openInternalRef = useRef(onOpenInternal);
+  const linkTargetsRef = useRef(linkTargets);
   saveRef.current = onSave;
   openInternalRef.current = onOpenInternal;
+  linkTargetsRef.current = linkTargets;
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -60,12 +65,36 @@ export function MarkdownEditor({
     heading: HeadingContext | null;
   } | null>(null);
 
+  // Obsidian-style [[ link autocomplete: typing [[ opens a note-name picker;
+  // completing fills the ]] (or reuses the pair closeBrackets already added).
+  const wikilinkCompletions = (context: CompletionContext) => {
+    const match = context.matchBefore(/\[\[[^\][]*$/);
+    if (!match) return null;
+    const names = linkTargetsRef.current ?? [];
+    if (!names.length) return null;
+    return {
+      from: match.from + 2,
+      options: names.map((name) => ({
+        label: name,
+        apply: (view: EditorView, _c: unknown, from: number, to: number) => {
+          const closing = view.state.sliceDoc(to, to + 2) === "]]" ? "" : "]]";
+          view.dispatch({
+            changes: { from, to, insert: name + closing },
+            selection: EditorSelection.cursor(from + name.length + 2),
+          });
+        },
+      })),
+      validFor: /^[^\][]*$/,
+    };
+  };
+
   const extensions = useMemo(
     () => [
       history(),
       markdown({ base: markdownLanguage }),
       EditorView.lineWrapping,
       EditorState.tabSize.of(2),
+      autocompletion({ override: [wikilinkCompletions], icons: false }),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -357,7 +386,7 @@ export function MarkdownEditor({
           highlightSelectionMatches: true,
           bracketMatching: true,
           closeBrackets: true,
-          autocompletion: true,
+          autocompletion: false,
           searchKeymap: true,
         }}
       />

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -135,6 +136,113 @@ class Message(Base):
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 
 
+class StudySet(Base):
+    __tablename__ = "study_sets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    course: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    scope_path: Mapped[str | None] = mapped_column(String, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+    items: Mapped[list["StudySetItem"]] = relationship(
+        back_populates="study_set",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="StudySetItem.id",
+    )
+
+
+class StudySetItem(Base):
+    __tablename__ = "study_set_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "study_set_id", "kind", "ref", name="uq_study_set_item_ref"
+        ),
+        Index("ix_study_set_item_set", "study_set_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    study_set_id: Mapped[int] = mapped_column(
+        ForeignKey("study_sets.id", ondelete="CASCADE")
+    )
+    # document | vault_note | generated_note
+    kind: Mapped[str] = mapped_column(String)
+    ref: Mapped[str] = mapped_column(String)
+    mode: Mapped[str] = mapped_column(String, default="snippets")
+
+    study_set: Mapped["StudySet"] = relationship(back_populates="items")
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String, index=True, default="queued")
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str | None] = mapped_column(Text, default=None)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON, default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+
+class TransformationTemplate(Base):
+    __tablename__ = "transformation_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    prompt: Mapped[str] = mapped_column(Text)
+    apply_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+    runs: Mapped[list["TransformationRun"]] = relationship(
+        back_populates="template",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class TransformationRun(Base):
+    __tablename__ = "transformation_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transformation_templates.id", ondelete="SET NULL"), default=None
+    )
+    target_kind: Mapped[str] = mapped_column(String)
+    target_ref: Mapped[str | None] = mapped_column(String, default=None)
+    study_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("study_sets.id", ondelete="SET NULL"), default=None
+    )
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), default=None
+    )
+    output_path: Mapped[str | None] = mapped_column(String, default=None)
+    status: Mapped[str] = mapped_column(String, index=True, default="queued")
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+
+    template: Mapped["TransformationTemplate | None"] = relationship(
+        back_populates="runs"
+    )
+
+
 class Concept(Base):
     __tablename__ = "concepts"
     __table_args__ = (
@@ -255,6 +363,35 @@ class PastPaperQuestion(Base):
     concept_name: Mapped[str | None] = mapped_column(String, default=None)
     content_hash: Mapped[str] = mapped_column(String, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class WikiSource(Base):
+    """Per-document wiki-processing state for incremental builds.
+
+    ``Document.content_hash`` is the *current* hash; this row remembers the
+    hash as of the last wiki run so unchanged sources can be skipped.
+    """
+
+    __tablename__ = "wiki_sources"
+    __table_args__ = (
+        UniqueConstraint("document_id", name="uq_wiki_source_document"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE")
+    )
+    content_hash: Mapped[str] = mapped_column(String)
+    # Vault-relative path of the source-summary page written for this document.
+    summary_page: Mapped[str | None] = mapped_column(String, default=None)
+    # Vault-relative paths of entity/concept pages created/updated from it.
+    pages: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="ok")  # ok | failed
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
 
 
 class ChunkEmbedding(Base):

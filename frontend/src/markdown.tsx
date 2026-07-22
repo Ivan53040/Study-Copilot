@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import remarkCallouts from "remark-obsidian-callout";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import mermaid from "mermaid";
+import "katex/dist/katex.min.css";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -43,9 +46,39 @@ function Mermaid({ code }: { code: string }) {
   return <div className="mermaid" ref={ref} />;
 }
 
-export const mdRemarkPlugins = [remarkGfm, remarkCallouts] as any[];
-// rehype-raw first so the callout title HTML becomes real nodes, then highlight.
-export const mdRehypePlugins = [rehypeRaw, rehypeHighlight] as any[];
+export function stripFrontmatter(raw: string): string {
+  if (raw.startsWith("---")) {
+    const end = raw.indexOf("\n---", 3);
+    if (end !== -1) {
+      const nl = raw.indexOf("\n", end + 1);
+      return nl !== -1 ? raw.slice(nl + 1) : "";
+    }
+  }
+  return raw;
+}
+
+// Rewrite [[Name#Heading|alias]] wikilinks to markdown links with a wikilink:
+// scheme, so a custom `a` component can resolve and open them. The #heading is
+// kept in the target; embeds (![[Name]]) become images a custom `img` handles.
+export function wikilinksToMd(text: string): string {
+  return text.replace(
+    /\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]+))?\]\]/g,
+    (_m, name: string, heading?: string, alias?: string) => {
+      const target = name.trim() + (heading ?? "").trim();
+      const label =
+        alias?.trim() ||
+        (heading
+          ? `${name.trim()} › ${heading.slice(1).trim()}`
+          : name.trim());
+      return `[${label}](wikilink:${encodeURIComponent(target)})`;
+    },
+  );
+}
+
+export const mdRemarkPlugins = [remarkGfm, remarkMath, remarkCallouts] as any[];
+// rehype-raw first so callout title HTML becomes real nodes; KaTeX renders
+// $...$ and $$...$$ math before syntax highlighting handles code blocks.
+export const mdRehypePlugins = [rehypeRaw, rehypeKatex, rehypeHighlight] as any[];
 
 // Base components: render ```mermaid blocks as diagrams; keep highlight classes
 // on all other code.

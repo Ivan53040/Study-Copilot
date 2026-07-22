@@ -21,7 +21,8 @@ from app.obsidian.templates import render_revision_note, revision_note_frontmatt
 from app.obsidian.writer import WriteResult, safe_filename, write_note
 from app.retrieval.citations import location
 from app.retrieval.service import search
-from app.retrieval.types import MetadataFilter, SearchHit
+from app.retrieval.types import SearchHit
+from app.study_sets.service import metadata_filter_for_scope
 
 logger = get_logger("generation.notes")
 
@@ -84,6 +85,7 @@ def generate_revision_note(
     course: str | None = None,
     scope_path: str | None = None,
     scope_name: str | None = None,
+    study_set_id: int | None = None,
     week: int | None = None,
     topic: str | None = None,
     settings: Settings | None = None,
@@ -94,14 +96,20 @@ def generate_revision_note(
     settings = settings or get_settings()
     adapter = adapter or get_chat_adapter(settings)
 
-    display_scope = course or scope_name
+    flt, resolved = metadata_filter_for_scope(
+        settings=settings,
+        study_set_id=study_set_id,
+        course=course,
+        scope_path=scope_path,
+        week=week,
+    )
+    display_scope = resolved.course or resolved.name or scope_name
     title = _note_title(display_scope, week, topic)
     filename = safe_filename(title) + ".md"
     target_rel = f"{_OUTPUT_SUBDIR}/{filename}"
 
-    flt = MetadataFilter(course=course, path_prefix=scope_path, week=week)
     retrieval = search(
-        _query(course, week, topic), settings=settings, flt=flt,
+        _query(display_scope, week, topic), settings=settings, flt=flt,
         final_limit=_NOTE_CONTEXT_LIMIT,
     )
     context = build_context(retrieval.hits)

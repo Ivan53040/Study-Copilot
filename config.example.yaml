@@ -1,5 +1,5 @@
 vault:
-  root: C:\Users\ivank\Documents\StudyVault
+  root: ./sample-vault
   read_paths:
   - '**'
   write_paths:
@@ -10,10 +10,7 @@ vault:
   - '**/.env'
   - '**/.ssh/**'
   - '**/.trash/**'
-external_sources:
-- path: C:/Users/ivank/iCloudDrive/reit exam
-  course: REIT6811
-  source_type: past-paper
+external_sources: []
 models:
   # Switch the chat model here: lmstudio (local, default) | openai | anthropic | echo.
   # Cloud providers read their API key from the environment (see .env.example).
@@ -32,6 +29,11 @@ models:
   cloud_fallback:
     enabled: false
     require_approval: true
+  openai:
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini
+  anthropic:
+    model: claude-opus-4-8
 retrieval:
   keyword_limit: 20
   vector_limit: 20
@@ -40,8 +42,8 @@ generation:
   temperature: 0.1
   require_citations: true
 sync:
-  enabled: true
-  icloud_root: C:/Users/ivank/iCloudDrive/iCloud~md~obsidian/Ivan Kung's Note
+  enabled: false
+  icloud_root:
   mode: twoway
   run_in_app: false
   interval_minutes: 5
@@ -49,8 +51,60 @@ sync:
   - .trash
 database_url: sqlite:///./data/study_copilot.db
 lectures:
-  root: C:\Users\ivank\Documents\Lecture Notes
+  root:
+voice_notes:
+  enabled: false
+  whisper_model_path:
+  whisper_cli_path: whisper-cli
+  ffmpeg_path: ffmpeg
+  audio_root: ./data/voice_notes
+  keep_audio: false
+  language: auto
+  max_upload_mb: 250
 embeddings:
   provider: lmstudio
   model: text-embedding-nomic-embed-text-v1.5
-  base_url: null
+  base_url:
+task_models:
+  chat:
+    provider:
+    model:
+    base_url:
+  deep_ask:
+    provider:
+    model:
+    base_url:
+  transformations:
+    provider:
+    model:
+    base_url:
+  quiz_marking:
+    provider:
+    model:
+    base_url:
+  translation:
+    provider:
+    model:
+    base_url:
+  voice_notes:
+    provider:
+    model:
+    base_url:
+  wiki:
+    provider:
+    model:
+    base_url:
+ingestion:
+  chunk_tokens: 360
+  chunk_overlap_tokens: 50
+  min_chunk_tokens: 4
+wiki:
+  root: StudyCopilot/Wiki
+  max_pages_per_source: 6
+  max_source_chars: 24000
+  max_index_chars: 8000
+  max_existing_page_chars: 3000
+  min_cohesion: 0.15
+  json_retries: 1
+  chat_timeout_seconds: 900
+  max_concurrent_sources: 4

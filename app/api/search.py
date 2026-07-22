@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.config.settings import Settings, get_settings
 from app.retrieval.citations import format_citation
 from app.retrieval.service import search
-from app.retrieval.types import MetadataFilter
+from app.study_sets.service import metadata_filter_for_scope
 
 router = APIRouter(tags=["search"])
 
@@ -17,6 +17,7 @@ class SearchRequest(BaseModel):
     query: str
     course: str | None = None
     scope_path: str | None = None
+    study_set_id: int | None = None
     week: int | None = None
     source_type: str | None = None
     max_trust_level: int | None = None
@@ -28,9 +29,11 @@ class SearchRequest(BaseModel):
 def post_search(
     req: SearchRequest, settings: Settings = Depends(get_settings)
 ) -> dict:
-    flt = MetadataFilter(
+    flt, _ = metadata_filter_for_scope(
+        settings=settings,
+        study_set_id=req.study_set_id,
         course=req.course,
-        path_prefix=req.scope_path,
+        scope_path=req.scope_path,
         week=req.week,
         source_type=req.source_type,
         max_trust_level=req.max_trust_level,

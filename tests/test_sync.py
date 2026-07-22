@@ -6,8 +6,11 @@ from pathlib import Path
 
 import pytest
 
+import socket
+
 from app.config.settings import Settings, SyncConfig, VaultConfig
 from app.sync.icloud_sync import SyncError, _build_command, sync_to_icloud
+from app.sync.service import desktop_app_running
 
 
 def _settings(local: Path, icloud: Path, mode: str = "mirror") -> Settings:
@@ -46,6 +49,24 @@ def test_refuses_identical_source_dest(tmp_path: Path):
     (same / "a.md").write_text("x", encoding="utf-8")
     with pytest.raises(SyncError, match="identical"):
         sync_to_icloud(_settings(same, same))
+
+
+def test_desktop_app_running_detects_listener():
+    # A free port (nothing listening) -> app considered closed.
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    free_port = probe.getsockname()[1]
+    probe.close()
+    assert desktop_app_running(port=free_port, timeout=0.2) is False
+
+    # A listening socket -> app considered open (sync should skip).
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    try:
+        assert desktop_app_running(port=server.getsockname()[1], timeout=0.2) is True
+    finally:
+        server.close()
 
 
 def test_refuses_missing_icloud_root(tmp_path: Path):

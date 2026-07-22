@@ -101,6 +101,41 @@ def test_lmstudio_adapter_sends_no_auth_header(monkeypatch):
     assert captured["headers"] is None  # local path stays unauthenticated
 
 
+def test_lmstudio_adapter_can_send_extra_payload(monkeypatch):
+    captured = {}
+
+    def fake_post(url, *, json, headers, timeout):
+        captured["json"] = json
+        return _FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(chat_module.httpx, "post", fake_post)
+
+    adapter = LMStudioChatAdapter(
+        base_url="http://localhost:1234/v1",
+        model="local",
+        extra_payload={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    adapter.generate([ChatMessage(role="user", content="hello")])
+
+    assert captured["json"]["chat_template_kwargs"]["enable_thinking"] is False
+
+
+def test_factory_can_override_request_timeout(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_post(url, *, json, headers, timeout):
+        captured["timeout"] = timeout
+        return _FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(chat_module.httpx, "post", fake_post)
+
+    settings = Settings(vault=VaultConfig(root=tmp_path))
+    adapter = get_chat_adapter(settings, task="wiki", timeout=900)
+    adapter.generate([ChatMessage(role="user", content="hello")])
+
+    assert captured["timeout"] == 900
+
+
 # ---- Anthropic adapter: system split + temperature handling ----
 
 

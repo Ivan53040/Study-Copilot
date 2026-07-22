@@ -67,6 +67,7 @@ def _openai_chat_completion(
     timeout: float,
     api_key: str | None = None,
     provider_label: str = "LM Studio",
+    extra_payload: dict | None = None,
 ) -> ChatResponse:
     """POST to an OpenAI-compatible ``/chat/completions`` endpoint.
 
@@ -80,6 +81,8 @@ def _openai_chat_completion(
     }
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if extra_payload:
+        payload.update(extra_payload)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
         resp = httpx.post(
@@ -97,10 +100,17 @@ def _openai_chat_completion(
 
 
 class LMStudioChatAdapter:
-    def __init__(self, base_url: str, model: str, timeout: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout: float = 120.0,
+        extra_payload: dict | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model_name = model
         self._timeout = timeout
+        self._extra_payload = extra_payload
 
     def generate(
         self,
@@ -116,6 +126,7 @@ class LMStudioChatAdapter:
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=self._timeout,
+            extra_payload=self._extra_payload,
         )
 
 
@@ -280,23 +291,36 @@ class EchoChatAdapter:
         return ChatResponse(content=content, model=self.model_name)
 
 
-def get_chat_adapter(settings: Settings) -> ChatAdapter:
-    provider = settings.models.default_provider
+def get_chat_adapter(
+    settings: Settings, task: str = "chat", timeout: float | None = None
+) -> ChatAdapter:
+    override = getattr(settings.task_models, task, None)
+    provider = (
+        override.provider
+        if override is not None and override.provider
+        else settings.models.default_provider
+    )
     if provider == "echo":
         return EchoChatAdapter()
     if provider == "openai":
         cfg = settings.models.openai
         return OpenAIChatAdapter(
-            base_url=cfg.base_url,
-            model=cfg.model,
+            base_url=(override.base_url if override and override.base_url else cfg.base_url),
+            model=(override.model if override and override.model else cfg.model),
             api_key=os.environ.get(cfg.api_key_env, ""),
+            timeout=timeout or 120.0,
         )
     if provider == "anthropic":
         cfg = settings.models.anthropic
         return AnthropicChatAdapter(
             api_key=os.environ.get(cfg.api_key_env, ""),
-            model=cfg.model,
+            model=(override.model if override and override.model else cfg.model),
             max_tokens=cfg.max_tokens,
+            timeout=timeout or 120.0,
         )
     lm = settings.models.lmstudio
-    return LMStudioChatAdapter(base_url=lm.base_url, model=lm.model)
+    return LMStudioChatAdapter(
+        base_url=(override.base_url if override and override.base_url else lm.base_url),
+        model=(override.model if override and override.model else lm.model),
+        timeout=timeout or 120.0,
+    )

@@ -305,10 +305,46 @@ def create_folder(relpath: str, settings: Settings | None = None) -> dict:
     return {"path": relpath, "created": True}
 
 
+def _rewrite_links_to(from_rel: str, to_rel: str, settings: Settings) -> int:
+    """Retarget every ``[[wikilink]]`` after a rename; returns notes changed.
+
+    Preserves ``#heading`` and ``|alias`` parts, and the ``!`` of embeds,
+    because only the ``[[Name`` prefix is rewritten. Notes that are not
+    editable (per workspace rules) are left untouched.
+    """
+    old_stem, new_stem = Path(from_rel).stem, Path(to_rel).stem
+    if old_stem == new_stem:
+        return 0
+    pattern = re.compile(
+        rf"\[\[\s*{re.escape(old_stem)}\s*(?=[\]#|])", re.IGNORECASE
+    )
+    changed = 0
+    for path, rel in _iter_notes(settings):
+        if rel == to_rel:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        new_text, hits = pattern.subn(lambda _m: f"[[{new_stem}", text)
+        if not hits:
+            continue
+        try:
+            write_note(rel, new_text, settings)
+            changed += 1
+        except PathSecurityError:
+            continue
+    return changed
+
+
 def rename_note(
     from_rel: str, to_rel: str, settings: Settings | None = None
 ) -> dict:
-    """Rename/move a note within the vault (text files only)."""
+    """Rename/move a note within the vault (text files only).
+
+    When the note's name changes, wikilinks across the vault are retargeted
+    to the new name (Obsidian's "update internal links" behavior).
+    """
     settings = settings or get_settings()
     root = _vault_root(settings)
     src = assert_workspace_writable(root / from_rel, settings)
@@ -320,8 +356,14 @@ def rename_note(
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
     new_rel = dst.relative_to(root).as_posix()
-    logger.info("Renamed note %s -> %s", from_rel, new_rel)
-    return {"from": from_rel, "to": new_rel}
+    links_updated = _rewrite_links_to(from_rel, new_rel, settings)
+    logger.info(
+        "Renamed note %s -> %s (links updated in %d notes)",
+        from_rel,
+        new_rel,
+        links_updated,
+    )
+    return {"from": from_rel, "to": new_rel, "links_updated": links_updated}
 
 
 def move_item(

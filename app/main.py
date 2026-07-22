@@ -11,17 +11,23 @@ from app import __version__
 from app.api import (
     chat,
     courses,
+    deep_ask,
     exams,
     health,
     ingest,
+    jobs,
     lectures,
     notes,
     plans,
     quizzes,
     search,
     settings,
+    study_sets,
     sync,
+    transformations,
     vault,
+    voice_notes,
+    wiki,
 )
 from app.config.settings import get_settings
 from app.database.db import init_db
@@ -69,9 +75,12 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(ingest.router)
+    app.include_router(jobs.router)
     app.include_router(courses.router)
+    app.include_router(study_sets.router)
     app.include_router(lectures.router)
     app.include_router(search.router)
+    app.include_router(deep_ask.router)
     app.include_router(chat.router)
     app.include_router(notes.router)
     app.include_router(quizzes.router)
@@ -79,6 +88,9 @@ def create_app() -> FastAPI:
     app.include_router(exams.router)
     app.include_router(vault.router)
     app.include_router(sync.router)
+    app.include_router(transformations.router)
+    app.include_router(voice_notes.router)
+    app.include_router(wiki.router)
     app.include_router(settings.router)
     return app
 

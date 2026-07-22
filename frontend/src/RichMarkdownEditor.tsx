@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
@@ -9,6 +9,7 @@ interface RichMarkdownEditorProps {
   onSave: (value: string) => void | Promise<void>;
   onOpenInternal: (target: string) => void;
   onOpenExternal: (url: string) => void;
+  linkTargets?: string[];
 }
 
 function escapeHtml(value: string) {
@@ -107,6 +108,7 @@ export function RichMarkdownEditor({
   onSave,
   onOpenInternal,
   onOpenExternal,
+  linkTargets,
 }: RichMarkdownEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const frontmatterRef = useRef("");
@@ -120,6 +122,98 @@ export function RichMarkdownEditor({
     submenu: "format" | "paragraph" | "insert" | null;
     hasSelection: boolean;
   } | null>(null);
+  const [suggest, setSuggest] = useState<{
+    query: string;
+    x: number;
+    y: number;
+    index: number;
+  } | null>(null);
+
+  const suggestions = useMemo(() => {
+    if (!suggest || !linkTargets?.length) return [];
+    const query = suggest.query.toLowerCase();
+    const starts = linkTargets.filter((n) => n.toLowerCase().startsWith(query));
+    const contains = linkTargets.filter(
+      (n) => !n.toLowerCase().startsWith(query) && n.toLowerCase().includes(query),
+    );
+    return [...starts, ...contains].slice(0, 8);
+  }, [suggest, linkTargets]);
+
+  // An unfinished "[[query" immediately before the caret, if any.
+  const findLinkTrigger = () => {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || !selection.isCollapsed) return null;
+    const node = selection.anchorNode;
+    if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+    if (!editorRef.current?.contains(node)) return null;
+    if (node.parentElement?.closest("[data-wikilink], code, pre")) return null;
+    const offset = selection.anchorOffset;
+    const match = /\[\[([^\][]*)$/.exec((node.textContent || "").slice(0, offset));
+    if (!match) return null;
+    return { node: node as Text, offset, query: match[1] };
+  };
+
+  const updateSuggest = () => {
+    const trigger = findLinkTrigger();
+    if (!trigger) {
+      setSuggest(null);
+      return;
+    }
+    const selection = window.getSelection()!;
+    const range = selection.getRangeAt(0).cloneRange();
+    let rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height && trigger.node.parentElement) {
+      rect = trigger.node.parentElement.getBoundingClientRect();
+    }
+    setSuggest({
+      query: trigger.query,
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - 290)),
+      y: Math.min(rect.bottom + 4, window.innerHeight - 250),
+      index: 0,
+    });
+  };
+
+  const pickSuggestion = (name: string) => {
+    const trigger = findLinkTrigger();
+    setSuggest(null);
+    if (!trigger) return;
+    const range = document.createRange();
+    range.setStart(trigger.node, trigger.offset - trigger.query.length - 2);
+    range.setEnd(trigger.node, trigger.offset);
+    range.deleteContents();
+    const span = document.createElement("span");
+    span.className = "rich-wikilink";
+    span.setAttribute("data-wikilink", name);
+    span.textContent = name;
+    range.insertNode(span);
+    const space = document.createTextNode(" ");
+    span.after(space);
+    const caret = document.createRange();
+    caret.setStart(space, 1);
+    caret.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
+    sync();
+  };
+
+  const handleSuggestKeys = (event: React.KeyboardEvent) => {
+    if (!suggest || !suggestions.length) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : suggestions.length - 1;
+      setSuggest(
+        (cur) =>
+          cur && { ...cur, index: (cur.index + step) % suggestions.length },
+      );
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      pickSuggestion(suggestions[suggest.index] ?? suggestions[0]);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setSuggest(null);
+    }
+  };
 
   useEffect(() => {
     if (!editorRef.current || value === lastValueRef.current) return;
@@ -274,6 +368,7 @@ export function RichMarkdownEditor({
           event.preventDefault();
           void onSave(valueRef.current);
         }
+        handleSuggestKeys(event);
       }}
     >
       <div className="rich-editor-toolbar" aria-label="Formatting toolbar">
@@ -292,7 +387,12 @@ export function RichMarkdownEditor({
         contentEditable
         suppressContentEditableWarning
         spellCheck
-        onInput={sync}
+        onInput={() => {
+          sync();
+          updateSuggest();
+        }}
+        onScroll={() => setSuggest(null)}
+        onBlur={() => setSuggest(null)}
         onContextMenu={openContextMenu}
         onClick={(event) => {
           const element = event.target as HTMLElement;
@@ -311,6 +411,23 @@ export function RichMarkdownEditor({
           }
         }}
       />
+      {suggest && suggestions.length > 0 && (
+        <div className="link-suggest" style={{ left: suggest.x, top: suggest.y }}>
+          {suggestions.map((name, i) => (
+            <button
+              type="button"
+              key={name}
+              className={`link-suggest-item${i === suggest.index ? " active" : ""}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pickSuggestion(name);
+              }}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
       {menu && (
         <>
           <div className="editor-menu-backdrop" onMouseDown={closeMenu} />

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.database.db import session_scope
-from app.ingestion.service import ingest
+from app.ingestion.service import ingest, ingest_single_file
 from app.models.embeddings import HashingEmbeddings
 from app.retrieval.citations import format_citation, obsidian_link
 from app.retrieval.hybrid_search import fuse, reciprocal_rank_fusion
@@ -14,6 +14,7 @@ from app.retrieval.keyword_search import build_match_query, keyword_search
 from app.retrieval.service import search
 from app.retrieval.types import MetadataFilter, SearchHit
 from app.retrieval.vector_search import vector_search
+from app.wiki import store
 
 
 def _hit(cid, trust=5, title="Doc", path="/v/Doc.md") -> SearchHit:
@@ -127,6 +128,40 @@ def test_search_service_keyword_only_when_embeddings_fail(settings, db):
     assert resp.used_vector is False
     assert resp.note and "keyword-only" in resp.note
     assert resp.hits  # keyword results still returned
+
+
+def test_course_search_includes_matching_wiki_pages(settings, db):
+    settings.vault.read_paths.append("StudyCopilot/**")
+    settings.embeddings.provider = "lmstudio"
+    settings.embeddings.base_url = "http://127.0.0.1:9/v1"
+    ingest(settings)
+    rel = store.page_rel_path("REIT6811", "concept", "Reliability Wiki", settings)
+    store.write_page(
+        rel,
+        {
+            "title": "Reliability Wiki",
+            "type": "concept",
+            "course": "REIT6811",
+            "sources": ["s1.md"],
+            "summary": "Wiki synthesis for reliability.",
+            "source_type": "ai-generated",
+            "reviewed_by_user": False,
+            "updated_at": "2026-07-07",
+        },
+        "Reliability wiki synthesis for measurement consistency.",
+        settings,
+    )
+    ingest_single_file(settings.vault.root / rel, settings=settings)
+
+    resp = search(
+        "reliability",
+        settings=settings,
+        flt=MetadataFilter(course="REIT6811"),
+        final_limit=2,
+    )
+
+    assert any("StudyCopilot/Wiki" in h.path.replace("\\", "/") for h in resp.hits)
+    assert any("StudyCopilot/Wiki" not in h.path.replace("\\", "/") for h in resp.hits)
 
 
 # ---- citations ----

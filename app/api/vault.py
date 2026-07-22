@@ -27,6 +27,12 @@ from app.vault.service import (
     set_note_property,
     write_note,
 )
+from app.vault.links import (
+    get_mentions,
+    link_mention,
+    review_mentions_with_ai,
+    search_backlink_candidates,
+)
 from app.vault.organizer import apply_organization, preview_organization
 from app.vault.formatter import preview_document_format
 
@@ -91,6 +97,20 @@ class OrganizeApply(BaseModel):
 class FormatPreviewReq(BaseModel):
     path: str
     content: str | None = None
+
+
+class LinkMentionReq(BaseModel):
+    source_path: str
+    target_path: str
+    line: int
+    start: int
+    end: int
+    aliases: list[str] = []
+
+
+class BacklinkReviewReq(BaseModel):
+    path: str
+    aliases: list[str] = []
 
 
 @router.get("/tree")
@@ -289,6 +309,68 @@ def post_export_pdf(req: PathReq, settings: Settings = Depends(get_settings)) ->
         return export_pdf(req.path, settings)
     except PathSecurityError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/backlinks")
+def get_backlinks(
+    path: str = Query(...),
+    alias: list[str] = Query(default=[]),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return get_mentions(path, settings, aliases=alias)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/backlinks/search")
+def get_backlink_search(
+    q: str = Query(..., min_length=2),
+    limit: int = Query(8, ge=1, le=20),
+    mention_limit: int = Query(80, ge=1, le=300),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return search_backlink_candidates(
+        q, settings, target_limit=limit, mention_limit=mention_limit
+    )
+
+
+@router.post("/backlinks/review")
+def post_backlink_review(
+    req: BacklinkReviewReq, settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return review_mentions_with_ai(req.path, settings, aliases=req.aliases)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/backlinks/link")
+def post_backlink_link(
+    req: LinkMentionReq, settings: Settings = Depends(get_settings)
+) -> dict:
+    try:
+        return link_mention(
+            req.source_path,
+            req.target_path,
+            req.line,
+            req.start,
+            req.end,
+            settings,
+            aliases=req.aliases,
+        )
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/graph")

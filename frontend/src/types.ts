@@ -54,6 +54,53 @@ export interface NotePreview {
   model: string;
 }
 
+export interface VoiceNoteStatus {
+  enabled: boolean;
+  model_path: string | null;
+  model_exists: boolean;
+  model_is_partial: boolean;
+  whisper_cli_path: string;
+  whisper_cli_available: boolean;
+  ffmpeg_path: string;
+  ffmpeg_available: boolean;
+  language: string;
+  max_upload_mb: number;
+}
+
+export interface VoiceNoteResult {
+  transcript: string;
+  markdown: string;
+  title: string;
+  model: string;
+  whisper_model_path: string;
+  written: boolean;
+  target_path: string | null;
+  audio_path: string | null;
+}
+
+export interface VoiceTranscriptionResult {
+  transcript: string;
+  whisper_model_path: string;
+  audio_path: string | null;
+}
+
+export interface NoteTranslation {
+  text: string;
+  translation: string;
+  source_language: "English";
+  target_language: "Traditional Chinese";
+  model: string;
+}
+
+export interface TranslatedNoteResult {
+  source_path: string;
+  path: string;
+  title: string;
+  blocks: number;
+  written: boolean;
+  status?: "running" | "succeeded" | "failed";
+}
+
 export interface CourseSummary {
   course: string;
   label: string;
@@ -64,10 +111,11 @@ export interface CourseSummary {
 export interface VaultScope {
   id: string;
   name: string;
-  kind: "course" | "folder";
+  kind: "course" | "folder" | "study_set";
   course: string | null;
   path: string;
   documents: number;
+  study_set_id?: number;
 }
 
 export interface DocumentRow {
@@ -227,6 +275,64 @@ export interface VaultNote {
   editable: boolean;
 }
 
+export interface MentionSpan {
+  line: number;
+  start: number;
+  end: number;
+  snippet: string;
+  hl_start: number;
+  hl_end: number;
+  reason?: string;
+  confidence?: number;
+}
+
+export interface MentionGroup {
+  path: string;
+  title: string;
+  mentions: MentionSpan[];
+}
+
+export interface NoteMentions {
+  path: string;
+  name: string;
+  linked: MentionGroup[];
+  unlinked: MentionGroup[];
+  model?: string | null;
+  reviewed?: number;
+  candidates?: number;
+  notice?: string | null;
+}
+
+export interface WikiBacklinkReviewTarget {
+  path: string;
+  title: string;
+  aliases: string[];
+  review: NoteMentions;
+}
+
+export interface WikiBacklinkReview {
+  course: string | null;
+  targets: WikiBacklinkReviewTarget[];
+  pages_reviewed: number;
+  suggestions: number;
+  errors: { path: string; title: string; error: string }[];
+}
+
+export interface BacklinkSearchTarget {
+  path: string;
+  title: string;
+  name: string;
+  unlinked: MentionGroup[];
+  count: number;
+}
+
+export interface BacklinkSearchResponse {
+  query: string;
+  targets: BacklinkSearchTarget[];
+  count: number;
+  mentions: number;
+}
+
 export interface GraphNode {
   id: string;
   title: string;
@@ -238,6 +344,48 @@ export interface VaultGraph {
   nodes: GraphNode[];
   edges: { source: string; target: string }[];
   stats: { notes: number; links: number };
+}
+
+export interface WikiPage {
+  path: string;
+  title: string;
+  type: "map" | "concept" | "entity" | "source";
+  sources: string[];
+  summary: string;
+  updated_at: string;
+}
+
+export interface WikiPagesResponse {
+  course: string | null;
+  pages: WikiPage[];
+  has_purpose: boolean;
+  index_path: string | null;
+  log_path: string;
+  purpose_path: string;
+}
+
+export interface WikiGraphNode {
+  id: string;
+  title: string;
+  type: string;
+  course: string | null;
+  community: number;
+  degree: number;
+  flagged: boolean;
+}
+
+export interface WikiGraphEdge {
+  source: string;
+  target: string;
+  weight: number;
+  signals: { link: number; source: number; adamic: number; title: number; type: number };
+}
+
+export interface WikiGraph {
+  nodes: WikiGraphNode[];
+  edges: WikiGraphEdge[];
+  communities: { id: number; size: number; cohesion: number; flagged: boolean }[];
+  stats: { pages: number; edges: number; communities: number; cross_course_edges: number };
 }
 
 export interface OrganizerMove {
@@ -278,7 +426,65 @@ export interface Health {
   external_sources: number;
 }
 
+export interface StudySetItem {
+  id?: number;
+  kind: "document" | "vault_note" | "generated_note";
+  ref: string | number;
+  mode: "full" | "snippets" | "exclude";
+}
+
+export interface StudySet {
+  id: number;
+  name: string;
+  course: string | null;
+  scope_path: string | null;
+  items: StudySetItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Job {
+  id: number;
+  type: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  progress_current: number;
+  progress_total: number;
+  message: string | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface TransformationTemplate {
+  id: number;
+  name: string;
+  description: string;
+  prompt: string;
+  apply_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskModelOverride {
+  provider: ChatProvider | null;
+  model: string | null;
+  base_url: string | null;
+}
+
 export type ChatProvider = "lmstudio" | "openai" | "anthropic" | "echo";
+
+export type TaskModelName =
+  | "chat"
+  | "deep_ask"
+  | "transformations"
+  | "quiz_marking"
+  | "translation"
+  | "voice_notes"
+  | "wiki";
 
 export interface AppSettings {
   vault_root: string;
@@ -296,6 +502,10 @@ export interface AppSettings {
   embedding_provider: "lmstudio" | "hash";
   embedding_base_url: string | null;
   embedding_model: string;
+  task_models: Record<TaskModelName, TaskModelOverride>;
+  chunk_tokens: number;
+  chunk_overlap_tokens: number;
+  min_chunk_tokens: number;
   temperature: number;
   require_citations: boolean;
 }
@@ -314,6 +524,10 @@ export interface SettingsPayload {
   embedding_provider: "lmstudio" | "hash";
   embedding_base_url: string | null;
   embedding_model: string;
+  task_models: AppSettings["task_models"];
+  chunk_tokens: number;
+  chunk_overlap_tokens: number;
+  min_chunk_tokens: number;
   temperature: number;
   require_citations: boolean;
 }

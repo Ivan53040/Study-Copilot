@@ -51,6 +51,10 @@ class SettingsUpdate(BaseModel):
     embedding_provider: str = "lmstudio"
     embedding_base_url: str | None = None
     embedding_model: str = Field(min_length=1)
+    task_models: dict[str, dict[str, str | None]] = Field(default_factory=dict)
+    chunk_tokens: int = Field(default=360, ge=100, le=8192)
+    chunk_overlap_tokens: int = Field(default=50, ge=0, le=2048)
+    min_chunk_tokens: int = Field(default=8, ge=0, le=200)
     temperature: float = Field(ge=0, le=2)
     require_citations: bool = True
 
@@ -111,6 +115,10 @@ def _public_settings() -> dict:
         "embedding_provider": settings.embeddings.provider,
         "embedding_base_url": settings.embeddings.base_url,
         "embedding_model": settings.embeddings.model,
+        "task_models": settings.task_models.model_dump(),
+        "chunk_tokens": settings.ingestion.chunk_tokens,
+        "chunk_overlap_tokens": settings.ingestion.chunk_overlap_tokens,
+        "min_chunk_tokens": settings.ingestion.min_chunk_tokens,
         "temperature": settings.generation.temperature,
         "require_citations": settings.generation.require_citations,
     }
@@ -174,6 +182,30 @@ def update_settings(req: SettingsUpdate) -> dict:
     embeddings["base_url"] = (
         req.embedding_base_url.rstrip("/") if req.embedding_base_url else None
     )
+
+    valid_tasks = {
+        "chat",
+        "deep_ask",
+        "transformations",
+        "quiz_marking",
+        "translation",
+        "voice_notes",
+        "wiki",
+    }
+    task_models = data.setdefault("task_models", {})
+    for task, override in req.task_models.items():
+        if task not in valid_tasks or not isinstance(override, dict):
+            continue
+        task_models[task] = {
+            key: (value.rstrip("/") if key == "base_url" and value else value)
+            for key, value in override.items()
+            if key in {"provider", "model", "base_url"}
+        }
+
+    ingestion = data.setdefault("ingestion", {})
+    ingestion["chunk_tokens"] = req.chunk_tokens
+    ingestion["chunk_overlap_tokens"] = req.chunk_overlap_tokens
+    ingestion["min_chunk_tokens"] = req.min_chunk_tokens
 
     generation = data.setdefault("generation", {})
     generation["temperature"] = req.temperature
