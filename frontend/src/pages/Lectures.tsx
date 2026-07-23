@@ -6,6 +6,7 @@ import type {
   LectureDocument,
   LecturePreview,
   LectureViewer,
+  TransformationTemplate,
 } from "../types";
 
 export function LecturesPage() {
@@ -13,6 +14,8 @@ export function LecturesPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
   const [selected, setSelected] = useState<LecturePreview | null>(null);
+  const [templates, setTemplates] = useState<TransformationTemplate[]>([]);
+  const [templateId, setTemplateId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -30,6 +33,13 @@ export function LecturesPage() {
     ]);
     setDocuments(result.documents);
     setSettings(appSettings);
+    api
+      .transformationTemplates()
+      .then((templateResult) => {
+        setTemplates(templateResult.templates);
+        setTemplateId(templateResult.templates[0]?.id ?? null);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -93,6 +103,21 @@ export function LecturesPage() {
       setViewerError((error as Error).message);
     } finally {
       setViewerBusy(false);
+    }
+  };
+
+  const runTransformation = async () => {
+    if (!selected || !templateId) return;
+    setMessage("");
+    try {
+      const result = await api.runTransformation({
+        template_id: templateId,
+        target_kind: "document",
+        target_ref: String(selected.id),
+      });
+      setMessage(`Transformation queued as job #${result.job.id}.`);
+    } catch (error) {
+      setMessage((error as Error).message);
     }
   };
 
@@ -287,6 +312,19 @@ export function LecturesPage() {
                 <div className="lecture-sections">
                   <div className="lecture-file-detail-header">
                     <span>{selected.title}</span>
+                    <select
+                      value={templateId ?? ""}
+                      onChange={(event) => setTemplateId(Number(event.target.value))}
+                    >
+                      {templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="small" onClick={runTransformation} disabled={!templateId}>
+                      Transform
+                    </button>
                     <button className="small" onClick={() => api.vaultOpenExternal(selected.path)}>
                       <Icon name="external-link" size={13} /> Open
                     </button>

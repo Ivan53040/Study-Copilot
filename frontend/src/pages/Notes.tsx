@@ -3,11 +3,24 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { api } from "../api";
 import { Icon } from "../icons";
+import { LocalGraph } from "../LocalGraph";
 import { MarkdownEditor } from "../MarkdownEditor";
+import { NoteEmbed, unwrapEmbedParagraph } from "../NoteEmbed";
 import { RichMarkdownEditor } from "../RichMarkdownEditor";
-import { mdComponents, mdRehypePlugins, mdRemarkPlugins } from "../markdown";
+import {
+  mdComponents,
+  mdRehypePlugins,
+  mdRemarkPlugins,
+  stripFrontmatter,
+  wikilinksToMd,
+} from "../markdown";
 import type {
+  BacklinkSearchResponse,
+  BacklinkSearchTarget,
   FormatPreview,
+  MentionGroup,
+  MentionSpan,
+  NoteMentions,
   NoteVersion,
   OrganizerPreview,
   TreeNode,
@@ -24,25 +37,248 @@ const slug = (s: string) =>
 const stripExt = (name: string) => name.replace(/\.(md|markdown|txt)$/i, "");
 const basename = (p: string) => p.split("/").pop() ?? p;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const TRANSLATION_MAX_CHARS = 4000;
+const NOTE_TRANSLATION_CACHE_PREFIX = "study-copilot-note-translation:";
 
-function stripFrontmatter(raw: string): string {
-  if (raw.startsWith("---")) {
-    const end = raw.indexOf("\n---", 3);
-    if (end !== -1) {
-      const nl = raw.indexOf("\n", end + 1);
-      return nl !== -1 ? raw.slice(nl + 1) : "";
-    }
-  }
-  return raw;
+type TranslationStatus = "loading" | "ready" | "error";
+type TranslationBubble = {
+  text: string;
+  translation: string | null;
+  status: TranslationStatus;
+  error?: string;
+  x: number;
+  y: number;
+};
+type TranslationMenu = { text: string; x: number; y: number };
+type InlineNoteTranslation = {
+  path: string;
+  title: string | null;
+  markdown: string;
+  status: TranslationStatus;
+  progress?: string;
+  error?: string;
+};
+type MarkdownBlock = {
+  markdown: string;
+  text: string;
+  kind: "heading" | "text" | "skip";
+  headingPrefix?: string;
+};
+type MarkdownChunk = {
+  kind: "translate" | "skip";
+  markdown: string;
+  text: string;
+};
+
+function normalizeTranslationText(text: string): string {
+  return text.replace(/\s+\n/g, "\n").replace(/\n\s+/g, "\n").replace(/[ \t]+/g, " ").trim();
 }
 
-function wikilinksToMd(text: string): string {
-  return text.replace(
-    /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g,
-    (_m, name: string, alias?: string) =>
-      `[${(alias || name).trim()}](wikilink:${encodeURIComponent(name.trim())})`,
+function isTranslatableText(text: string, maxChars = TRANSLATION_MAX_CHARS): boolean {
+  const cleaned = normalizeTranslationText(text);
+  return cleaned.length > 1 && cleaned.length <= maxChars && /[A-Za-z]/.test(cleaned);
+}
+
+function isIgnoredTranslationTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    !!target.closest("a, code, pre, button, input, textarea, select, .wikilink")
   );
 }
+
+function textNodeAtPoint(x: number, y: number): { node: Text; offset: number } | null {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  const range = doc.caretRangeFromPoint?.(x, y);
+  if (range?.startContainer.nodeType === Node.TEXT_NODE) {
+    return { node: range.startContainer as Text, offset: range.startOffset };
+  }
+  const position = doc.caretPositionFromPoint?.(x, y);
+  if (position?.offsetNode.nodeType === Node.TEXT_NODE) {
+    return { node: position.offsetNode as Text, offset: position.offset };
+  }
+  return null;
+}
+
+function wordAtPoint(event: React.MouseEvent, container: HTMLElement): string | null {
+  if (isIgnoredTranslationTarget(event.target)) return null;
+  const hit = textNodeAtPoint(event.clientX, event.clientY);
+  if (!hit || !container.contains(hit.node.parentElement)) return null;
+  const text = hit.node.textContent ?? "";
+  let start = Math.min(hit.offset, text.length);
+  let end = start;
+  const isWord = (char: string) => /[A-Za-z'-]/.test(char);
+  while (start > 0 && isWord(text[start - 1])) start--;
+  while (end < text.length && isWord(text[end])) end++;
+  const word = normalizeTranslationText(text.slice(start, end).replace(/^['-]+|['-]+$/g, ""));
+  return /^[A-Za-z][A-Za-z'-]*$/.test(word) && word.length > 1 ? word : null;
+}
+
+function selectedTextIn(container: HTMLElement): string | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const start = range.startContainer.parentElement;
+  const end = range.endContainer.parentElement;
+  if (!start || !end || !container.contains(start) || !container.contains(end)) return null;
+  const text = normalizeTranslationText(selection.toString());
+  return isTranslatableText(text) ? text : null;
+}
+
+function splitTranslationText(text: string, maxChars = 3600): string[] {
+  const chunks: string[] = [];
+  const pushPart = (part: string) => {
+    const cleaned = part.trim();
+    if (!cleaned) return;
+    if (cleaned.length <= maxChars) {
+      chunks.push(cleaned);
+      return;
+    }
+    const sentences = cleaned.match(/[^.!?。！？]+[.!?。！？]?/g) ?? [cleaned];
+    let current = "";
+    for (const sentence of sentences) {
+      const next = current ? `${current}${sentence}` : sentence;
+      if (next.length <= maxChars) {
+        current = next;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      if (sentence.length <= maxChars) {
+        current = sentence;
+      } else {
+        for (let i = 0; i < sentence.length; i += maxChars) {
+          chunks.push(sentence.slice(i, i + maxChars).trim());
+        }
+        current = "";
+      }
+    }
+    if (current.trim()) chunks.push(current.trim());
+  };
+
+  for (const paragraph of text.split(/\n{2,}/)) {
+    pushPart(paragraph);
+  }
+  return chunks;
+}
+
+void splitTranslationText;
+
+function markdownTextForTranslation(markdown: string): string {
+  return normalizeTranslationText(
+    markdown
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, "$2$1")
+      .replace(/[`*_~>#-]/g, " ")
+      .replace(/^\s*\d+\.\s+/gm, "")
+      .replace(/^\s*[-+*]\s+/gm, ""),
+  );
+}
+
+function splitMarkdownBlocks(markdown: string): MarkdownBlock[] {
+  return markdown
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      if (/^```/.test(part) || /^\|.*\|/m.test(part) || /^!\[/.test(part)) {
+        return { markdown: part, text: "", kind: "skip" };
+      }
+      const heading = part.match(/^(#{1,6})\s+(.+)$/);
+      if (heading) {
+        const text = markdownTextForTranslation(heading[2]);
+        return {
+          markdown: part,
+          text,
+          kind: isTranslatableText(text) ? "heading" : "skip",
+          headingPrefix: heading[1],
+        };
+      }
+      const text = markdownTextForTranslation(part);
+      return {
+        markdown: part,
+        text,
+        kind: isTranslatableText(text) ? "text" : "skip",
+      };
+    });
+}
+
+void splitMarkdownBlocks;
+
+function bilingualMarkdown(blocks: MarkdownBlock[], translations: Map<number, string>): string {
+  return blocks
+    .map((block, index) => {
+      const translated = translations.get(index);
+      if (!translated) return block.markdown;
+      if (block.kind === "heading" && block.headingPrefix) {
+        return `${block.markdown}\n\n${block.headingPrefix} ${translated}`;
+      }
+      return `${block.markdown}\n\n${translated}`;
+    })
+    .join("\n\n");
+}
+
+void bilingualMarkdown;
+
+function splitMarkdownChunks(blocks: MarkdownBlock[], maxChars = 2200): MarkdownChunk[] {
+  const chunks: MarkdownChunk[] = [];
+  let pending: MarkdownBlock[] = [];
+  let pendingChars = 0;
+
+  const flush = () => {
+    if (!pending.length) return;
+    chunks.push({
+      kind: "translate",
+      markdown: pending.map((block) => block.markdown).join("\n\n"),
+      text: pending.map((block) => block.markdown).join("\n\n"),
+    });
+    pending = [];
+    pendingChars = 0;
+  };
+
+  for (const block of blocks) {
+    if (block.kind === "skip") {
+      flush();
+      chunks.push({ kind: "skip", markdown: block.markdown, text: "" });
+      continue;
+    }
+    const extra = block.markdown.length + (pending.length ? 2 : 0);
+    if (pending.length && pendingChars + extra > maxChars) flush();
+    pending.push(block);
+    pendingChars += extra;
+  }
+  flush();
+  return chunks;
+}
+
+void splitMarkdownChunks;
+
+function bilingualChunkMarkdown(chunks: MarkdownChunk[], translations: Map<number, string>): string {
+  return chunks
+    .map((chunk, index) => {
+      const translated = translations.get(index);
+      return translated ? `${chunk.markdown}\n\n${translated}` : chunk.markdown;
+    })
+    .join("\n\n");
+}
+
+void bilingualChunkMarkdown;
+
+function hashString(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 33) ^ value.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function noteTranslationCacheKey(path: string, content: string): string {
+  return `${NOTE_TRANSLATION_CACHE_PREFIX}${path}:${hashString(content)}`;
+}
+
+void noteTranslationCacheKey;
 
 function toText(children: React.ReactNode): string {
   if (typeof children === "string") return children;
@@ -72,8 +308,10 @@ function ancestorsOf(path: string): string[] {
 function sortChildren(children: TreeNode[], dir: "asc" | "desc"): TreeNode[] {
   const folders = children.filter((c) => c.type === "folder");
   const files = children.filter((c) => c.type === "file");
+  const collate = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
   const cmp = (a: TreeNode, b: TreeNode) =>
-    dir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+    dir === "asc" ? collate(a.name, b.name) : collate(b.name, a.name);
   folders.sort(cmp);
   files.sort(cmp);
   return [...folders, ...files];
@@ -270,6 +508,15 @@ export function NotesPage({
     x: number;
     y: number;
   } | null>(null);
+  const translationCache = useRef<Map<string, string>>(new Map());
+  const hoverTranslationTimer = useRef<number | null>(null);
+  const hoverTranslationRequest = useRef(0);
+  const popupTranslationRequest = useRef(0);
+  const [translationTooltip, setTranslationTooltip] = useState<TranslationBubble | null>(null);
+  const [translationMenu, setTranslationMenu] = useState<TranslationMenu | null>(null);
+  const [translationPopup, setTranslationPopup] = useState<TranslationBubble | null>(null);
+  const [inlineTranslation, setInlineTranslation] = useState<InlineNoteTranslation | null>(null);
+  const [wholeNoteTranslating, setWholeNoteTranslating] = useState(false);
   const [organizer, setOrganizer] = useState<OrganizerPreview | null>(null);
   const [selectedOrganizerMoves, setSelectedOrganizerMoves] = useState<Set<string>>(
     new Set(),
@@ -280,9 +527,15 @@ export function NotesPage({
   const [split, setSplit] = useState<"right" | "down" | null>(null);
   const [splitPath, setSplitPath] = useState<string | null>(null);
   const [splitNote, setSplitNote] = useState<VaultNote | null>(null);
+  const [showLocalGraph, setShowLocalGraph] = useState(false);
   const [backlinksInDocument, setBacklinksInDocument] = useState(
     () => localStorage.getItem("ws.backlinksInDocument") === "true",
   );
+  const [backlinkReviewOpen, setBacklinkReviewOpen] = useState(false);
+  const [backlinkSearchText, setBacklinkSearchText] = useState("");
+  const [backlinkSearch, setBacklinkSearch] = useState<BacklinkSearchResponse | null>(null);
+  const [backlinkSearching, setBacklinkSearching] = useState(false);
+  const [linkingBacklink, setLinkingBacklink] = useState<string | null>(null);
   const [bookmarks, setBookmarks] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem("ws.bookmarks") ?? "[]")); }
     catch { return new Set(); }
@@ -376,9 +629,11 @@ export function NotesPage({
   useEffect(() => {
     if (!active || active.startsWith("new:")) {
       setNote(null);
+      setInlineTranslation(null);
       return;
     }
     setViewMode("read");
+    setInlineTranslation(null);
     setError(null);
     setExpanded((prev) => new Set([...prev, ...ancestorsOf(active)]));
     api
@@ -397,6 +652,30 @@ export function NotesPage({
     }
     api.vaultNote(splitPath).then(setSplitNote).catch(() => setSplitNote(null));
   }, [splitPath]);
+
+  useEffect(() => {
+    if (!note || editing || !note.content.includes('translated_status: "running"')) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      api
+        .vaultNote(note.path)
+        .then((fresh) => {
+          setNote(fresh);
+          setDraft(fresh.content);
+          if (!fresh.content.includes('translated_status: "running"')) {
+            void refreshTree();
+            flash(
+              fresh.content.includes('translated_status: "failed"')
+                ? "Translation failed. The note has the error details."
+                : "Translation finished.",
+            );
+          }
+        })
+        .catch(() => undefined);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [editing, note]);
 
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: "nearest" });
@@ -419,6 +698,144 @@ export function NotesPage({
     note?.links.forEach((l) => (m[l.name.toLowerCase()] = l.path));
     return m;
   }, [note]);
+
+  const [mentions, setMentions] = useState<NoteMentions | null>(null);
+  useEffect(() => {
+    setMentions(null);
+    if (!note?.path) return;
+    let alive = true;
+    api
+      .vaultBacklinks(note.path)
+      .then((m) => alive && setMentions(m))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [note?.path]);
+
+  // Every note name in the vault, for [[ link autocomplete in the editors.
+  const linkTargets = useMemo(() => {
+    const names = new Set<string>();
+    const walk = (node: TreeNode | null | undefined) => {
+      if (!node) return;
+      if (node.type === "file" && /\.(md|markdown|txt)$/i.test(node.name)) {
+        names.add(stripExt(node.name));
+      }
+      node.children?.forEach(walk);
+    };
+    walk(tree);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [tree]);
+
+  const linkUnlinkedMention = async (group: MentionGroup, m: MentionSpan) => {
+    if (!note) return;
+    try {
+      await api.vaultLinkMention({
+        source_path: group.path,
+        target_path: note.path,
+        line: m.line,
+        start: m.start,
+        end: m.end,
+      });
+      flash(`Linked mention in ${group.title}.`);
+      setMentions(await api.vaultBacklinks(note.path));
+    } catch (e) {
+      flash(String((e as Error).message ?? e));
+    }
+  };
+
+  const runBacklinkSearch = async (value = backlinkSearchText) => {
+    const query = value.trim();
+    setBacklinkSearchText(value);
+    if (query.length < 2) {
+      setBacklinkSearch(null);
+      return;
+    }
+    setBacklinkSearching(true);
+    try {
+      setBacklinkSearch(await api.vaultBacklinkSearch(query));
+    } catch (e) {
+      flash(String((e as Error).message ?? e));
+    } finally {
+      setBacklinkSearching(false);
+    }
+  };
+
+  const openBacklinkReview = () => {
+    const query = note?.name ?? "";
+    setBacklinkReviewOpen(true);
+    setBacklinkSearchText(query);
+    if (query.length >= 2) void runBacklinkSearch(query);
+  };
+
+  const removeBacklinkCandidate = (
+    target: BacklinkSearchTarget,
+    group: MentionGroup,
+    mention: MentionSpan,
+  ) => {
+    setBacklinkSearch((previous) => {
+      if (!previous) return previous;
+      const targets = previous.targets
+        .map((candidate) => {
+          if (candidate.path !== target.path) return candidate;
+          const unlinked = candidate.unlinked
+            .map((candidateGroup) => {
+              if (candidateGroup.path !== group.path) return candidateGroup;
+              return {
+                ...candidateGroup,
+                mentions: candidateGroup.mentions.filter(
+                  (item) =>
+                    !(
+                      item.line === mention.line &&
+                      item.start === mention.start &&
+                      item.end === mention.end
+                    ),
+                ),
+              };
+            })
+            .filter((candidateGroup) => candidateGroup.mentions.length > 0);
+          const count = unlinked.reduce((sum, item) => sum + item.mentions.length, 0);
+          return { ...candidate, unlinked, count };
+        })
+        .filter((candidate) => candidate.count > 0);
+      return {
+        ...previous,
+        targets,
+        count: targets.length,
+        mentions: targets.reduce((sum, candidate) => sum + candidate.count, 0),
+      };
+    });
+  };
+
+  const approveBacklinkCandidate = async (
+    target: BacklinkSearchTarget,
+    group: MentionGroup,
+    mention: MentionSpan,
+  ) => {
+    const key = `${target.path}:${group.path}:${mention.line}:${mention.start}:${mention.end}`;
+    setLinkingBacklink(key);
+    try {
+      await api.vaultLinkMention({
+        source_path: group.path,
+        target_path: target.path,
+        line: mention.line,
+        start: mention.start,
+        end: mention.end,
+      });
+      removeBacklinkCandidate(target, group, mention);
+      if (note?.path === target.path) setMentions(await api.vaultBacklinks(target.path));
+      if (active === group.path) {
+        const fresh = await api.vaultNote(group.path);
+        setNote(fresh);
+        setDraft(fresh.content);
+      }
+      flash(`Linked ${target.title} in ${group.title}.`);
+    } catch (e) {
+      flash(String((e as Error).message ?? e));
+    } finally {
+      setLinkingBacklink(null);
+    }
+  };
 
   const openExternalUrl = useCallback(async (url: string) => {
     if ("__TAURI_INTERNALS__" in window) {
@@ -468,7 +885,7 @@ export function NotesPage({
       ].filter((value, index, values): value is string =>
         !!value && values.indexOf(value) === index
       );
-      let target = candidates[0] || null;
+      let target: string | null = null;
       for (const candidate of candidates) {
         try {
           await api.vaultNote(candidate);
@@ -476,6 +893,23 @@ export function NotesPage({
           break;
         } catch {
           // Try the next valid Obsidian resolution (root-relative, then note-relative).
+        }
+      }
+      if (!target && targetWithoutHeading) {
+        // Unresolved note link: create it beside the current note (Obsidian-style).
+        const ext = /\.([a-z0-9]{1,6})$/i
+          .exec(targetWithoutHeading)?.[1]
+          ?.toLowerCase();
+        if (ext && !["md", "markdown", "txt"].includes(ext)) return;
+        const newPath = withExtension(currentDir + targetWithoutHeading);
+        try {
+          await api.vaultSaveNote(newPath, `# ${stripExt(targetWithoutHeading)}\n\n`);
+          await refreshTree();
+          flash(`Created "${newPath}".`);
+          target = newPath;
+        } catch (e) {
+          flash((e as Error).message);
+          return;
         }
       }
       if (heading) setPendingHeading(slug(heading));
@@ -491,11 +925,15 @@ export function NotesPage({
       a: ({ href, children }: any) => {
         if (href?.startsWith("wikilink:")) {
           const name = decodeURIComponent(href.slice("wikilink:".length));
-          const target = linkMap[name.toLowerCase()];
+          const [base] = name.split("#", 2);
+          const resolved = linkMap[base.toLowerCase()];
+          const unresolved =
+            resolved === null && !/\.(?!md$|markdown$|txt$)[a-z0-9]{1,6}$/i.test(base);
           return (
             <span
-              className="wikilink"
-              onClick={(e) => void openLinkedNote(target || name, e.ctrlKey || e.metaKey)}
+              className={`wikilink${unresolved ? " wikilink-unresolved" : ""}`}
+              title={unresolved ? `"${base}" doesn't exist yet — click to create it` : undefined}
+              onClick={(e) => void openLinkedNote(name, e.ctrlKey || e.metaKey)}
             >
               {children}
             </span>
@@ -530,6 +968,25 @@ export function NotesPage({
             {children}
           </a>
         );
+      },
+      p: unwrapEmbedParagraph,
+      img: ({ src, alt }: any) => {
+        if (src?.startsWith("wikilink:")) {
+          const target = decodeURIComponent(src.slice("wikilink:".length));
+          const currentDir = note?.path.includes("/")
+            ? note.path.slice(0, note.path.lastIndexOf("/") + 1)
+            : "";
+          return (
+            <NoteEmbed
+              target={target}
+              resolve={(base) => linkMap[base.toLowerCase()] ?? null}
+              currentDir={currentDir}
+              depth={0}
+              onOpen={(t, newTab) => void openLinkedNote(t, newTab)}
+            />
+          );
+        }
+        return <img src={src} alt={alt} />;
       },
       h1: heading("h1"),
       h2: heading("h2"),
@@ -811,6 +1268,11 @@ export function NotesPage({
       setTabs((p) => p.map((x) => (x === active ? r.to : x)));
       setActive(r.to);
       await refreshTree();
+      if (r.links_updated > 0) {
+        flash(
+          `Updated links in ${r.links_updated} note${r.links_updated === 1 ? "" : "s"}.`,
+        );
+      }
     } catch (e) {
       flash((e as Error).message);
     }
@@ -1215,12 +1677,188 @@ export function NotesPage({
     }
   };
 
+  const translateText = useCallback(async (rawText: string) => {
+    const text = normalizeTranslationText(rawText);
+    const cached = translationCache.current.get(text);
+    if (cached) return cached;
+    const result = await api.translateNoteText({ text });
+    translationCache.current.set(text, result.translation);
+    return result.translation;
+  }, []);
+
+  const clearHoverTranslation = useCallback(() => {
+    if (hoverTranslationTimer.current !== null) {
+      window.clearTimeout(hoverTranslationTimer.current);
+      hoverTranslationTimer.current = null;
+    }
+    hoverTranslationRequest.current += 1;
+    setTranslationTooltip(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTranslationTimer.current !== null) {
+        window.clearTimeout(hoverTranslationTimer.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTranslationMenu(null);
+        setTranslationPopup(null);
+        clearHoverTranslation();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [clearHoverTranslation]);
+
+  const handleTranslationHover = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!(event.ctrlKey || event.metaKey)) {
+        clearHoverTranslation();
+        return;
+      }
+      const word = wordAtPoint(event, event.currentTarget);
+      if (!word) {
+        clearHoverTranslation();
+        return;
+      }
+      const x = clamp(event.clientX + 14, 8, window.innerWidth - 328);
+      const y = clamp(event.clientY + 18, 8, window.innerHeight - 170);
+      if (translationTooltip?.text === word && translationTooltip.status !== "error") {
+        setTranslationTooltip((current) => (current ? { ...current, x, y } : current));
+        return;
+      }
+      if (hoverTranslationTimer.current !== null) {
+        window.clearTimeout(hoverTranslationTimer.current);
+      }
+      const requestId = ++hoverTranslationRequest.current;
+      const cached = translationCache.current.get(word);
+      if (cached) {
+        setTranslationTooltip({ text: word, translation: cached, status: "ready", x, y });
+        return;
+      }
+      setTranslationTooltip({ text: word, translation: null, status: "loading", x, y });
+      hoverTranslationTimer.current = window.setTimeout(() => {
+        void translateText(word)
+          .then((translation) => {
+            if (hoverTranslationRequest.current === requestId) {
+              setTranslationTooltip({ text: word, translation, status: "ready", x, y });
+            }
+          })
+          .catch((error) => {
+            if (hoverTranslationRequest.current === requestId) {
+              setTranslationTooltip({
+                text: word,
+                translation: null,
+                status: "error",
+                error: (error as Error).message,
+                x,
+                y,
+              });
+            }
+          });
+      }, 250);
+    },
+    [clearHoverTranslation, translateText, translationTooltip],
+  );
+
+  const handleTranslationContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const text = selectedTextIn(event.currentTarget);
+      if (!text) {
+        setTranslationMenu(null);
+        return;
+      }
+      event.preventDefault();
+      setContextMenu(null);
+      clearHoverTranslation();
+      setTranslationMenu({
+        text,
+        x: clamp(event.clientX, 8, window.innerWidth - 250),
+        y: clamp(event.clientY, 8, window.innerHeight - 70),
+      });
+    },
+    [clearHoverTranslation],
+  );
+
+  const openTranslationPopup = useCallback(
+    (item: TranslationMenu) => {
+      const x = clamp(item.x, 8, window.innerWidth - 390);
+      const y = clamp(item.y, 8, window.innerHeight - 340);
+      const cached = translationCache.current.get(item.text);
+      setTranslationMenu(null);
+      setTranslationPopup({
+        text: item.text,
+        translation: cached ?? null,
+        status: cached ? "ready" : "loading",
+        x,
+        y,
+      });
+      if (cached) return;
+      const requestId = ++popupTranslationRequest.current;
+      void translateText(item.text)
+        .then((translation) => {
+          if (popupTranslationRequest.current === requestId) {
+            setTranslationPopup({ text: item.text, translation, status: "ready", x, y });
+          }
+        })
+        .catch((error) => {
+          if (popupTranslationRequest.current === requestId) {
+            setTranslationPopup({
+              text: item.text,
+              translation: null,
+              status: "error",
+              error: (error as Error).message,
+              x,
+              y,
+            });
+          }
+        });
+    },
+    [translateText],
+  );
+
+  const translateWholeNote = useCallback(async () => {
+    if (!note) return;
+    if (editing && draft !== note.content) {
+      flash("Save this note before translating it");
+      return;
+    }
+    setTranslationMenu(null);
+    setTranslationPopup(null);
+    clearHoverTranslation();
+    setInlineTranslation(null);
+    setWholeNoteTranslating(true);
+    flash("Translating note into a new Chinese Markdown file...");
+    try {
+      const result = await api.translateWholeNote(note.path, true);
+      await refreshTree();
+      setExpanded((previous) => new Set([...previous, ...ancestorsOf(result.path)]));
+      openInTab(result.path, true);
+      flash(
+        result.status === "running"
+          ? `Created translated note: ${result.title}. Translation is continuing in the background.`
+          : `Created translated note: ${result.title}`,
+      );
+    } catch (error) {
+      flash((error as Error).message);
+    } finally {
+      setWholeNoteTranslating(false);
+    }
+  }, [clearHoverTranslation, draft, editing, note, openInTab]);
+
   const renderNotePane = (
     document: VaultNote,
     options: { primary: boolean; close?: () => void },
   ) => {
+    const activeInlineTranslation =
+      options.primary && inlineTranslation?.path === document.path ? inlineTranslation : null;
     const markdown = options.primary
-      ? rendered
+      ? activeInlineTranslation?.markdown ?? rendered
       : wikilinksToMd(stripFrontmatter(document.content));
     return (
       <div className="pane-group">
@@ -1244,6 +1882,11 @@ export function NotesPage({
           <div className="note-pane-heading">
             <div>
               <h2 className="page-title" style={{ margin: "0 0 4px" }}>{document.name}</h2>
+              {activeInlineTranslation?.title && (
+                <h2 className="page-title translated-note-title">
+                  {activeInlineTranslation.title}
+                </h2>
+              )}
               <div className="small muted">{document.path}</div>
             </div>
           </div>
@@ -1263,6 +1906,7 @@ export function NotesPage({
               }}
               onBookmarkHeading={bookmarkHeading}
               onExtractHeading={extractHeading}
+              linkTargets={linkTargets}
             />
           ) : options.primary && viewMode === "edit" ? (
             <RichMarkdownEditor
@@ -1271,10 +1915,25 @@ export function NotesPage({
               onSave={(value) => save(false, value)}
               onOpenInternal={(target) => void openLinkedNote(target, true)}
               onOpenExternal={(url) => void openExternalUrl(url)}
+              linkTargets={linkTargets}
             />
           ) : (
             <>
-              <div className="md">
+              {activeInlineTranslation?.status === "loading" && (
+                <div className="note-banner">{activeInlineTranslation.progress ?? "Translating note..."}</div>
+              )}
+              {activeInlineTranslation?.status === "error" && (
+                <div className="warn-banner">{activeInlineTranslation.error}</div>
+              )}
+              <div
+                className="md"
+                onMouseMove={handleTranslationHover}
+                onMouseLeave={clearHoverTranslation}
+                onKeyUp={(event) => {
+                  if (!(event.ctrlKey || event.metaKey)) clearHoverTranslation();
+                }}
+                onContextMenu={handleTranslationContextMenu}
+              >
                 <ReactMarkdown
                   remarkPlugins={mdRemarkPlugins}
                   rehypePlugins={mdRehypePlugins}
@@ -1455,6 +2114,78 @@ export function NotesPage({
           </div>
         </>
       )}
+      {translationTooltip && (
+        <div
+          className={`translation-tooltip ${translationTooltip.status}`}
+          style={{ left: translationTooltip.x, top: translationTooltip.y }}
+        >
+          <div className="translation-source">{translationTooltip.text}</div>
+          <div className="translation-result">
+            {translationTooltip.status === "loading"
+              ? "Translating..."
+              : translationTooltip.status === "error"
+                ? translationTooltip.error
+                : translationTooltip.translation}
+          </div>
+        </div>
+      )}
+      {translationMenu && (
+        <>
+          <div className="menu-backdrop" onClick={() => setTranslationMenu(null)} />
+          <div
+            className="more-menu context-menu translation-context-menu"
+            style={{ left: translationMenu.x, top: translationMenu.y }}
+          >
+            <button className="more-item" onClick={() => openTranslationPopup(translationMenu)}>
+              <Icon name="sparkles" size={15} /> Translate to Traditional Chinese
+            </button>
+          </div>
+        </>
+      )}
+      {translationPopup && (
+        <>
+          <div className="menu-backdrop translation-popup-backdrop" onClick={() => setTranslationPopup(null)} />
+          <div
+            className={`translation-popup ${translationPopup.status}`}
+            style={{ left: translationPopup.x, top: translationPopup.y }}
+          >
+            <div className="translation-popup-header">
+              <div>
+                <div className="small muted">English to Traditional Chinese</div>
+                <strong>Translation</strong>
+              </div>
+              <button className="icon-btn" title="Close" onClick={() => setTranslationPopup(null)}>×</button>
+            </div>
+            <div className="translation-popup-section">
+              <div className="small muted">Original</div>
+              <div className="translation-original">{translationPopup.text}</div>
+            </div>
+            <div className="translation-popup-section">
+              <div className="small muted">Traditional Chinese</div>
+              <div className="translation-output">
+                {translationPopup.status === "loading"
+                  ? translationPopup.translation ?? "Translating..."
+                  : translationPopup.status === "error"
+                    ? translationPopup.error
+                    : translationPopup.translation}
+              </div>
+            </div>
+            <div className="translation-popup-actions">
+              <button
+                disabled={!translationPopup.translation}
+                onClick={() => {
+                  if (translationPopup.translation) {
+                    void navigator.clipboard.writeText(translationPopup.translation);
+                    flash("Translation copied");
+                  }
+                }}
+              >
+                <Icon name="copy" size={14} /> Copy
+              </button>
+            </div>
+          </div>
+        </>
+      )}
       {organizer && (
         <div className="organizer-backdrop">
           <div className="organizer-modal card">
@@ -1536,6 +2267,112 @@ export function NotesPage({
               >
                 {organizing ? "Applying…" : "Apply changes"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {backlinkReviewOpen && (
+        <div className="organizer-backdrop">
+          <div className="organizer-modal backlink-review-modal card">
+            <div className="row">
+              <div>
+                <h2 className="page-title">Search unlinked mentions</h2>
+                <p className="page-sub">
+                  Find plain-text mentions of a note title and approve each wikilink.
+                </p>
+              </div>
+              <div className="grow" />
+              <button onClick={() => setBacklinkReviewOpen(false)}>Close</button>
+            </div>
+            <form
+              className="backlink-search-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runBacklinkSearch();
+              }}
+            >
+              <input
+                autoFocus
+                value={backlinkSearchText}
+                onChange={(event) => setBacklinkSearchText(event.target.value)}
+                placeholder="Search a note title, e.g. A* Search"
+              />
+              <button
+                className="primary"
+                disabled={backlinkSearching || backlinkSearchText.trim().length < 2}
+              >
+                {backlinkSearching ? "Searching..." : "Search"}
+              </button>
+            </form>
+            <div className="backlink-review-results">
+              {!backlinkSearch && (
+                <div className="note-banner">
+                  Search for a concept or note title to review possible backlinks.
+                </div>
+              )}
+              {backlinkSearch && backlinkSearch.targets.length === 0 && (
+                <div className="note-banner">
+                  No unlinked mentions found for "{backlinkSearch.query}".
+                </div>
+              )}
+              {backlinkSearch && backlinkSearch.targets.length > 0 && (
+                <>
+                  <div className="small muted backlink-review-summary">
+                    {backlinkSearch.mentions} unlinked mentions across{" "}
+                    {backlinkSearch.count} target notes.
+                  </div>
+                  {backlinkSearch.targets.map((target) => (
+                    <section className="backlink-target" key={target.path}>
+                      <div className="backlink-target-header">
+                        <button
+                          className="linked-note backlink-target-title"
+                          onClick={() => openInTab(target.path, true)}
+                        >
+                          {target.title}
+                        </button>
+                        <span className="muted small">{target.path}</span>
+                        <span className="pill">{target.count}</span>
+                      </div>
+                      {target.unlinked.map((group) => (
+                        <div className="mention-group" key={`${target.path}:${group.path}`}>
+                          <button
+                            className="toc-item mention-title"
+                            onClick={() => openInTab(group.path, true)}
+                          >
+                            {group.title}
+                          </button>
+                          {group.mentions.map((mention) => {
+                            const key = `${target.path}:${group.path}:${mention.line}:${mention.start}:${mention.end}`;
+                            return (
+                              <div
+                                key={key}
+                                className="mention-snippet mention-unlinked backlink-review-hit"
+                              >
+                                <span onClick={() => openInTab(group.path, true)}>
+                                  {mention.snippet.slice(0, mention.hl_start)}
+                                  <mark>
+                                    {mention.snippet.slice(mention.hl_start, mention.hl_end)}
+                                  </mark>
+                                  {mention.snippet.slice(mention.hl_end)}
+                                </span>
+                                <button
+                                  className="mention-link-btn"
+                                  disabled={linkingBacklink === key}
+                                  onClick={() =>
+                                    void approveBacklinkCandidate(target, group, mention)
+                                  }
+                                >
+                                  {linkingBacklink === key ? "Linking..." : "Approve"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </section>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1670,6 +2507,14 @@ export function NotesPage({
               )}
               <button
                 className="icon-btn"
+                title="Create translated Chinese note"
+                onClick={() => void translateWholeNote()}
+                disabled={!note || wholeNoteTranslating}
+              >
+                <Icon name="languages" size={17} />
+              </button>
+              <button
+                className="icon-btn"
                 title="AI format document"
                 onClick={previewDocumentFormat}
                 disabled={formatting}
@@ -1785,6 +2630,9 @@ export function NotesPage({
                         <Icon name="graph" size={15} /> Backlinks in document
                         {backlinksInDocument && <span className="menu-check">✓</span>}
                       </button>
+                      <button className="more-item" onClick={() => { setMenuOpen(false); openBacklinkReview(); }}>
+                        <Icon name="search" size={15} /> Search unlinked mentions
+                      </button>
                       <button className="more-item" onClick={() => { void changeView("read"); setMenuOpen(false); }}>
                         <Icon name="book" size={15} /> Reading view
                       </button>
@@ -1830,6 +2678,9 @@ export function NotesPage({
                       </button>
                       <button className="more-item" onClick={() => setLinkedMenu((value) => !value)}>
                         <Icon name="graph" size={15} /> Open linked view
+                      </button>
+                      <button className="more-item" onClick={() => { setMenuOpen(false); setShowLocalGraph(true); }}>
+                        <Icon name="graph" size={15} /> Local graph
                       </button>
                       {linkedMenu && (
                         <div className="linked-view-menu">
@@ -1932,6 +2783,9 @@ export function NotesPage({
         )}
 
         <div className={`ws-content ${dropActive ? "drop-active" : ""}`}>
+          {wholeNoteTranslating && (
+            <div className="note-banner">Translating note into a new Chinese Markdown file...</div>
+          )}
           {banner && <div className="note-banner">{banner}</div>}
           {error && <div className="warn-banner">{error}</div>}
           {dropActive && (
@@ -2000,24 +2854,86 @@ export function NotesPage({
               ))}
             </>
           )}
-          {note && note.backlinks.length > 0 && (
+          {note && mentions && mentions.linked.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <div className="small muted" style={{ marginBottom: 6 }}>
-                Linked mentions ({note.backlinks.length})
+                Linked mentions (
+                {mentions.linked.reduce((n, g) => n + g.mentions.length, 0)})
               </div>
-              {note.backlinks.map((b) => (
-                <div
-                  key={b.path}
-                  className="toc-item"
-                  onClick={(e) => openInTab(b.path, e.ctrlKey || e.metaKey)}
-                >
-                  {b.title}
+              {mentions.linked.map((group) => (
+                <div key={group.path} className="mention-group">
+                  <div
+                    className="toc-item mention-title"
+                    onClick={(e) => openInTab(group.path, e.ctrlKey || e.metaKey)}
+                  >
+                    {group.title}
+                  </div>
+                  {group.mentions.map((m, i) => (
+                    <div
+                      key={i}
+                      className="mention-snippet"
+                      onClick={(e) => openInTab(group.path, e.ctrlKey || e.metaKey)}
+                    >
+                      {m.snippet.slice(0, m.hl_start)}
+                      <mark>{m.snippet.slice(m.hl_start, m.hl_end)}</mark>
+                      {m.snippet.slice(m.hl_end)}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+          {note && mentions && mentions.unlinked.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="small muted" style={{ marginBottom: 6 }}>
+                Unlinked mentions (
+                {mentions.unlinked.reduce((n, g) => n + g.mentions.length, 0)})
+              </div>
+              {mentions.unlinked.map((group) => (
+                <div key={group.path} className="mention-group">
+                  <div
+                    className="toc-item mention-title"
+                    onClick={(e) => openInTab(group.path, e.ctrlKey || e.metaKey)}
+                  >
+                    {group.title}
+                  </div>
+                  {group.mentions.map((m, i) => (
+                    <div key={i} className="mention-snippet mention-unlinked">
+                      <span
+                        onClick={(e) =>
+                          openInTab(group.path, e.ctrlKey || e.metaKey)
+                        }
+                      >
+                        {m.snippet.slice(0, m.hl_start)}
+                        <mark>{m.snippet.slice(m.hl_start, m.hl_end)}</mark>
+                        {m.snippet.slice(m.hl_end)}
+                      </span>
+                      <button
+                        className="mention-link-btn"
+                        title={`Turn into a [[${mentions.name}]] link`}
+                        onClick={() => void linkUnlinkedMention(group, m)}
+                      >
+                        Link
+                      </button>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
           )}
         </div>
       </div>
+      {showLocalGraph && active && (
+        <LocalGraph
+          path={active}
+          title={stripExt(basename(active))}
+          onOpen={(p) => {
+            openInTab(p, true);
+            setShowLocalGraph(false);
+          }}
+          onClose={() => setShowLocalGraph(false)}
+        />
+      )}
     </div>
   );
 }

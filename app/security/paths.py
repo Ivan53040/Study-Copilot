@@ -60,7 +60,7 @@ def is_denied(path: str | Path, settings: Settings) -> bool:
             return True
     # Defensive defaults regardless of config.
     parts = {part.lower() for part in p.parts}
-    if {".git", ".ssh", ".obsidian"} & parts:
+    if {".git", ".ssh", ".obsidian", ".trash"} & parts:
         return True
     if p.name.lower() == ".env":
         return True

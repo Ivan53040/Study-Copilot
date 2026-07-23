@@ -7,19 +7,27 @@ __pycache__/
 
 # Local config / secrets
 .env
+config.yaml
+.claude/
+.codex/
 
 # App data (SQLite db, vector store, indexes)
 data/
 *.db
 *.sqlite3
 
-# Generated eval output (report.md is committed as a snapshot)
+# Generated evaluation output
 evals/report.json
+evals/report.md
 
 # Frontend and Tauri build output
 frontend/dist/
 frontend/src-tauri/target/
 frontend/src-tauri/target-bundle/
+frontend/.env.production
+release/
+open-notebook-main/
+tools/whisper.cpp*/
 
 # OS
 .DS_Store

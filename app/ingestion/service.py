@@ -46,17 +46,18 @@ class IngestReport:
 
 def _parse_and_chunk(
     sf: ScannedFile,
+    settings: Settings,
 ) -> tuple[dict, list[RawChunk]]:
     """Return (frontmatter, chunks) for a scanned file."""
     if sf.ext in {".md", ".markdown"}:
         doc = parse_markdown(sf.path)
-        return doc.frontmatter, chunk_markdown(doc)
+        return doc.frontmatter, chunk_markdown(doc, settings=settings)
     if sf.ext == ".pdf":
         doc = parse_pdf(sf.path)
-        return {}, chunk_pdf(doc)
+        return {}, chunk_pdf(doc, settings=settings)
     if sf.ext == ".pptx":
         doc = parse_pptx(sf.path)
-        return {}, chunk_pdf(doc)
+        return {}, chunk_pdf(doc, settings=settings)
     if sf.ext == ".txt":
         text = Path(sf.path).read_text(encoding="utf-8", errors="replace")
         # Treat a plain-text file as one heading-less markdown body.
@@ -66,7 +67,7 @@ def _parse_and_chunk(
             path=Path(sf.path), frontmatter={}, body=text,
             sections=_split_sections(text),
         )
-        return {}, chunk_markdown(doc)
+        return {}, chunk_markdown(doc, settings=settings)
     return {}, []
 
 
@@ -74,7 +75,7 @@ def _upsert_document(
     session: Session, sf: ScannedFile, settings: Settings
 ) -> tuple[Document, int]:
     assert_readable(sf.path, settings)
-    frontmatter, raw_chunks = _parse_and_chunk(sf)
+    frontmatter, raw_chunks = _parse_and_chunk(sf, settings)
     cls = meta.classify(
         sf.path,
         frontmatter=frontmatter,

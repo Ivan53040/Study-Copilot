@@ -20,7 +20,7 @@ from app.learning.concepts import get_or_create_concept
 from app.logging_config import get_logger
 from app.models.chat import ChatAdapter, ChatError, ChatMessage, get_chat_adapter
 from app.retrieval.service import search
-from app.retrieval.types import MetadataFilter
+from app.study_sets.service import metadata_filter_for_scope
 
 logger = get_logger("generation.quiz")
 
@@ -131,6 +131,7 @@ def generate_quiz(
     course: str | None = None,
     scope_path: str | None = None,
     scope_name: str | None = None,
+    study_set_id: int | None = None,
     week: int | None = None,
     topic: str | None = None,
     num_questions: int = 5,
@@ -141,12 +142,20 @@ def generate_quiz(
     settings = settings or get_settings()
     adapter = adapter or get_chat_adapter(settings)
 
-    tracking_scope = course or (
+    flt, resolved = metadata_filter_for_scope(
+        settings=settings,
+        study_set_id=study_set_id,
+        course=course,
+        scope_path=scope_path,
+        week=week,
+    )
+    tracking_scope = resolved.course or (
+        resolved.name.replace(" ", "").upper() if resolved.name else None
+    ) or course or (
         scope_name.replace(" ", "").upper() if scope_name else None
     )
-    flt = MetadataFilter(course=course, path_prefix=scope_path, week=week)
     retrieval = search(
-        _query(course, week, topic), settings=settings, flt=flt, final_limit=12
+        _query(tracking_scope, week, topic), settings=settings, flt=flt, final_limit=12
     )
     context = build_context(retrieval.hits)
     if context.is_empty:

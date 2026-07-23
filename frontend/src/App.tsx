@@ -6,7 +6,8 @@ import { ChatPage } from "./pages/Chat";
 import { SearchPage } from "./pages/Search";
 import { GeneratePage } from "./pages/Generate";
 import { NotesPage } from "./pages/Notes";
-import { GraphPage } from "./pages/Graph";
+import { WikiPage } from "./pages/Wiki";
+import { VoiceNotesPage } from "./pages/VoiceNotes";
 import { LibraryPage } from "./pages/Library";
 import { LecturesPage } from "./pages/Lectures";
 import { QuizPage } from "./pages/Quiz";
@@ -18,7 +19,8 @@ import { SettingsPage, applyAppearance, loadAppearance } from "./pages/Settings"
 type Tab =
   | "notes"
   | "lectures"
-  | "graph"
+  | "voice"
+  | "wiki"
   | "search"
   | "generate"
   | "quiz"
@@ -31,9 +33,10 @@ type Tab =
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "notes", label: "Notes", icon: "file-text" },
   { id: "lectures", label: "Lecture Materials", icon: "layers" },
+  { id: "voice", label: "Voice Notes", icon: "mic" },
   { id: "plan", label: "Plan", icon: "calendar" },
   { id: "search", label: "Search", icon: "search" },
-  { id: "graph", label: "Graph", icon: "graph" },
+  { id: "wiki", label: "Wiki", icon: "book" },
   { id: "generate", label: "Generate", icon: "pencil" },
   { id: "quiz", label: "Quiz", icon: "graduation-cap" },
   { id: "progress", label: "Progress", icon: "trending-up" },
@@ -262,7 +265,8 @@ export function App() {
             <NotesPage key={vaultRevision} path={notePath} tocOpen={tocOpen} treeOpen={treeOpen} />
           )}
           {tab === "lectures" && <LecturesPage />}
-          {tab === "graph" && <GraphPage onOpen={openNote} />}
+          {tab === "voice" && <VoiceNotesPage onOpenNote={openNote} />}
+          {tab === "wiki" && <WikiPage onOpenNote={openNote} />}
           {tab === "search" && <SearchPage />}
           {tab === "generate" && <GeneratePage />}
           {tab === "quiz" && <QuizPage />}

@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::Manager;
@@ -6,26 +7,29 @@ use tauri::Manager;
 // Holds the spawned backend process so we can stop it when the app closes.
 struct Backend(Mutex<Option<Child>>);
 
-// Project location for this machine (personal desktop build). For a portable
-// installer this would be replaced by a bundled PyInstaller sidecar.
-const PROJECT_DIR: &str = r"C:\Users\ivank\Desktop\Sideproject\Study Copilot";
+fn project_dir() -> Option<PathBuf> {
+    std::env::var_os("STUDY_COPILOT_PROJECT_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok()?.parent().map(PathBuf::from))
+}
 
 // In a release build the app starts the Python backend itself (single launch).
 // In dev we rely on the manually-run backend, so we don't spawn a second one.
 #[cfg(not(debug_assertions))]
 fn spawn_backend() -> Option<Child> {
-    let python = format!(r"{PROJECT_DIR}\.venv\Scripts\pythonw.exe");
+    let project_dir = project_dir()?;
+    let python = project_dir.join(".venv/Scripts/pythonw.exe");
     let mut cmd = Command::new(python);
     cmd.args([
         "-m", "uvicorn", "app.main:app",
         "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning",
     ])
-    .current_dir(PROJECT_DIR)
+    .current_dir(&project_dir)
     .stdin(Stdio::null());
 
     // A detached GUI launch has no valid stdio; if the child inherits those
     // handles its logging crashes. Redirect to a log file (or null) instead.
-    match File::create(format!(r"{PROJECT_DIR}\data\desktop-backend.log")) {
+    match File::create(project_dir.join("data/desktop-backend.log")) {
         Ok(f) => {
             let err = f.try_clone().ok();
             cmd.stdout(Stdio::from(f));
@@ -42,6 +46,27 @@ fn spawn_backend() -> Option<Child> {
 fn spawn_backend() -> Option<Child> {
     None
 }
+
+// On exit, kick off one vault sync. The helper waits for the app to finish
+// closing (its backend port frees) before syncing, so the app and sync never
+// write the vault at the same time. Detached, so it outlives the app.
+#[cfg(not(debug_assertions))]
+fn spawn_sync_on_close() {
+    let Some(project_dir) = project_dir() else { return };
+    let python = project_dir.join(".venv/Scripts/pythonw.exe");
+    let script = project_dir.join("scripts/sync_standalone.py");
+    let _ = Command::new(python)
+        .arg(script)
+        .arg("--on-close")
+        .current_dir(project_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+#[cfg(debug_assertions)]
+fn spawn_sync_on_close() {}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -71,6 +96,7 @@ pub fn run() {
                         }
                     }
                 }
+                spawn_sync_on_close();
             }
         });
 }

@@ -3,19 +3,25 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pydantic-settings==2.7.1
+python-multipart==0.0.20
 
 # Persistence
 SQLAlchemy==2.0.36
 
 # Config / parsing
 PyYAML==6.0.2
+ruamel.yaml==0.19.1  # comment-preserving round-trip writes for config.yaml
+python-dotenv==1.2.2
 python-frontmatter==1.1.0
 PyMuPDF==1.25.1
 python-pptx==1.0.2
 Pillow==11.0.0
 
-# HTTP client (LM Studio adapter, later phases)
+# HTTP client (LM Studio / OpenAI-compatible adapter)
 httpx==0.28.1
+
+# Cloud Claude provider (optional; only needed for models.default_provider: anthropic)
+anthropic>=0.40.0
 
 # Vector math for retrieval
 numpy==2.2.1

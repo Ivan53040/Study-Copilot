@@ -5,7 +5,19 @@ materials, past papers and notes; will answer source-grounded questions, generat
 revision notes and quizzes, track concept-level progress, and write outputs back
 into a dedicated `StudyCopilot/` folder — **never** modifying your original notes.
 
-Built incrementally against the [build plan](Study_Copilot_Build_Plan.md).
+The architecture and key engineering decisions are documented in
+[`docs/architecture.md`](docs/architecture.md).
+
+```mermaid
+flowchart LR
+    A["Local Obsidian vault"] --> B["Parse, classify, and chunk"]
+    B --> C["FTS5 + vector retrieval"]
+    C --> D["Grounded study agent"]
+    D --> E["Chat, quizzes, plans, and exams"]
+    D --> F["Wiki, study sets, and voice notes"]
+    E --> G["Safe StudyCopilot/ writeback"]
+    F --> G
+```
 
 ## Status
 
@@ -29,9 +41,14 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -r requirements.txt # macOS/Linux
 ```
 
-Edit [`config.yaml`](config.yaml) to point at your vault and choose which folders
-are readable. The defaults target the REIT6811 course, plus a folder of
-past-paper PDFs.
+Copy the public-safe example, then edit `config.yaml` to point at your vault and
+choose which folders are readable:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+On PowerShell, use `Copy-Item config.example.yaml config.yaml` instead.
 
 ### Local vault + iCloud sync
 
@@ -39,7 +56,7 @@ iCloud Drive on Windows is unreliable at syncing *newly created* notes (they get
 stuck as online-only placeholders). So the copilot works against a **local**
 vault and syncs to iCloud on a timer:
 
-- `vault.root` → `C:/Users/ivank/Documents/StudyVault` (local working copy)
+- `vault.root` → your local working copy
 - `sync.icloud_root` → the iCloud Obsidian folder
 - Point **Obsidian itself at the local `StudyVault`** going forward.
 
@@ -125,7 +142,8 @@ npm run tauri build   # release: builds src-tauri/target/release/app.exe
   yourself); in a **release** build it spawns `pythonw -m uvicorn` on launch and
   stops it on exit (see [`src-tauri/src/lib.rs`](frontend/src-tauri/src/lib.rs)).
 - The release frontend calls the backend directly via `VITE_API_BASE`
-  (`frontend/.env.production`); the API client retries while the backend boots.
+  (`frontend/.env.production`, copied from `frontend/.env.example`); the API
+  client retries while the backend boots.
 - The backend path is currently baked for this machine (personal build). For a
   portable installer, package the backend with PyInstaller
   ([`scripts/desktop_backend.py`](scripts/desktop_backend.py)) and ship it as a
@@ -268,7 +286,7 @@ python -m pytest
 ## Evaluation
 
 A regression harness ([`evals/`](evals/)) measures retrieval quality, the safety
-guarantees, and marking consistency, and writes [`evals/report.md`](evals/report.md):
+guarantees, and marking consistency, and writes a local `evals/report.md`:
 
 ```bash
 python -m scripts.evaluate          # writes evals/report.md
@@ -280,10 +298,9 @@ python -m scripts.evaluate          # writes evals/report.md
   path traversal is blocked, and `.env`/`.obsidian` are unreadable.
 - **Marking** — same input grades identically (determinism guard).
 
-Latest run on the REIT6811 vault (keyword-only, LM Studio off): recall@5 ≈ 0.92,
-MRR ≈ 0.82, safety 5/5, marking 2/2. The one retrieval miss (a common-word
-"reliability vs validity" query) is the kind of gap semantic vector search
-recovers — load an embedding model and re-run to compare.
+Run it against your own vault to establish a project-specific baseline and
+compare keyword-only retrieval with semantic vector search. Generated reports
+are ignored so document titles and local evaluation data are not published.
 
 ## Safety model
 

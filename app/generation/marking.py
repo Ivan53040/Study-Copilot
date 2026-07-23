@@ -108,7 +108,7 @@ def submit_quiz(
     adapter: ChatAdapter | None = None,
 ) -> dict:
     settings = settings or get_settings()
-    adapter = adapter or get_chat_adapter(settings)
+    adapter = adapter or get_chat_adapter(settings, task="quiz_marking")
 
     with session_scope(settings) as session:
         quiz = session.get(Quiz, quiz_id)

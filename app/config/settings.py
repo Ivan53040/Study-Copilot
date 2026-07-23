@@ -41,14 +41,41 @@ class LMStudioConfig(BaseModel):
     model: str = "local-model"
 
 
+class OpenAIConfig(BaseModel):
+    """Cloud OpenAI (or any OpenAI-compatible gateway: OpenRouter, Groq, …).
+
+    The API key is read from the environment (``api_key_env``), never stored in
+    the config file.
+    """
+
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    api_key_env: str = "OPENAI_API_KEY"
+
+
+class AnthropicConfig(BaseModel):
+    """Cloud Anthropic (Claude). Uses the official ``anthropic`` SDK.
+
+    The API key is read from the environment (``api_key_env``), never stored in
+    the config file.
+    """
+
+    model: str = "claude-opus-4-8"
+    api_key_env: str = "ANTHROPIC_API_KEY"
+    max_tokens: int = 4096
+
+
 class CloudFallbackConfig(BaseModel):
     enabled: bool = False
     require_approval: bool = True
 
 
 class ModelsConfig(BaseModel):
+    # "lmstudio" (local, default), "openai", "anthropic", or "echo" (offline test).
     default_provider: str = "lmstudio"
     lmstudio: LMStudioConfig = Field(default_factory=LMStudioConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     cloud_fallback: CloudFallbackConfig = Field(default_factory=CloudFallbackConfig)
 
 
@@ -60,6 +87,14 @@ class EmbeddingsConfig(BaseModel):
     batch_size: int = 32
     # Dimension for the offline "hash" provider.
     hash_dim: int = 256
+
+
+class IngestionConfig(BaseModel):
+    # Approximate-token chunking; keeps old citation metadata but avoids
+    # model-context surprises from purely character-based chunks.
+    chunk_tokens: int = 360
+    chunk_overlap_tokens: int = 50
+    min_chunk_tokens: int = 4
 
 
 class RetrievalConfig(BaseModel):
@@ -76,6 +111,45 @@ class GenerationConfig(BaseModel):
     require_citations: bool = True
 
 
+class TaskModelOverride(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+
+
+class TaskModelsConfig(BaseModel):
+    chat: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    deep_ask: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    transformations: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    quiz_marking: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    translation: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    voice_notes: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    wiki: TaskModelOverride = Field(default_factory=TaskModelOverride)
+
+
+class WikiConfig(BaseModel):
+    """LLM-built wiki of interlinked entity/concept pages in the vault."""
+
+    # Vault-relative root; per-course wikis live in subfolders.
+    root: str = "StudyCopilot/Wiki"
+    # Cap on entity/concept pages the LLM may emit per source document.
+    max_pages_per_source: int = 6
+    # Clipping budgets (characters) to keep prompts inside local context windows.
+    max_source_chars: int = 24000
+    max_index_chars: int = 8000
+    max_existing_page_chars: int = 3000
+    # Communities with cohesion below this are flagged as sparse knowledge areas.
+    min_cohesion: float = 0.15
+    # Re-ask the model this many times when it returns unparseable JSON.
+    json_retries: int = 1
+    # Long-running source builds can exceed normal chat latency, especially
+    # when the local model server queues several concurrent requests.
+    chat_timeout_seconds: float = 900.0
+    # Sources processed in parallel (match the LLM server's concurrency;
+    # LM Studio default is 4). Writes are serialized regardless.
+    max_concurrent_sources: int = 4
+
+
 class LecturesConfig(BaseModel):
     """Folder that holds lecture PDFs / PowerPoint files."""
 
@@ -87,11 +161,31 @@ class LecturesConfig(BaseModel):
         return Path(os.path.expanduser(str(v))) if v is not None else None
 
 
+class VoiceNotesConfig(BaseModel):
+    """Local speech-to-text settings for uploaded or recorded voice notes."""
+
+    enabled: bool = True
+    whisper_model_path: Path | None = None
+    whisper_cli_path: str = "whisper-cli"
+    ffmpeg_path: str = "ffmpeg"
+    audio_root: Path = Path("./data/voice_notes")
+    keep_audio: bool = False
+    language: str = "auto"
+    max_upload_mb: int = 250
+
+    @field_validator("whisper_model_path", "audio_root")
+    @classmethod
+    def _expand_path(cls, v: Path | None) -> Path | None:
+        return Path(os.path.expanduser(str(v))) if v is not None else None
+
+
 class WorkspaceConfig(BaseModel):
     """Standalone note-workspace settings (browse/edit the whole vault)."""
 
     allow_edit: bool = True
     backup_on_edit: bool = True
+    # Keep at most this many automatic backups per note (0 = keep all).
+    max_backups_per_note: int = 20
     editable_extensions: list[str] = Field(
         default_factory=lambda: [".md", ".markdown", ".txt"]
     )
@@ -124,13 +218,17 @@ class SyncConfig(BaseModel):
 class Settings(BaseModel):
     vault: VaultConfig
     lectures: LecturesConfig = Field(default_factory=LecturesConfig)
+    voice_notes: VoiceNotesConfig = Field(default_factory=VoiceNotesConfig)
     external_sources: list[ExternalSource] = Field(default_factory=list)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
+    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    task_models: TaskModelsConfig = Field(default_factory=TaskModelsConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
+    wiki: WikiConfig = Field(default_factory=WikiConfig)
     database_url: str = "sqlite:///./data/study_copilot.db"
 
     @property
@@ -143,6 +241,22 @@ def _default_config_path() -> Path:
     return Path(os.environ.get("STUDY_COPILOT_CONFIG", "config.yaml"))
 
 
+def _load_env_file(directory: Path) -> None:
+    """Load cloud API keys from a sibling ``.env`` (real env vars still win).
+
+    Keys (OPENAI_API_KEY / ANTHROPIC_API_KEY) are kept out of the committed
+    ``config.yaml``; the desktop Settings screen writes them here instead.
+    """
+    env_path = directory / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - dotenv ships with uvicorn[standard]
+        return
+    load_dotenv(env_path, override=False)
+
+
 def load_settings(config_path: str | Path | None = None) -> Settings:
     """Load and validate settings from a YAML file."""
     path = Path(config_path) if config_path else _default_config_path()
@@ -151,6 +265,7 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
             f"Config file not found: {path.resolve()}. "
             "Copy config.yaml and set STUDY_COPILOT_CONFIG if needed."
         )
+    _load_env_file(path.resolve().parent)
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return Settings.model_validate(data)

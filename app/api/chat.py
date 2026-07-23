@@ -18,6 +18,9 @@ class ChatRequest(BaseModel):
     message: str
     course: str | None = None
     scope_path: str | None = None
+    study_set_id: int | None = None
+    context_mode: str = "retrieval"
+    context_items: list[dict] | None = None
     conversation_id: int | None = None
 
 
@@ -28,6 +31,9 @@ def post_chat(req: ChatRequest, settings: Settings = Depends(get_settings)) -> d
         settings=settings,
         course=req.course,
         scope_path=req.scope_path,
+        study_set_id=req.study_set_id,
+        context_mode=req.context_mode,
+        context_items=req.context_items,
         conversation_id=req.conversation_id,
     )
     return result.as_dict()

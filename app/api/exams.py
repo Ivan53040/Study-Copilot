@@ -20,13 +20,14 @@ class MockExamRequest(BaseModel):
     course: str | None = None
     scope_path: str | None = None
     scope_name: str | None = None
+    study_set_id: int | None = None
     week: int | None = None
     topic: str | None = None
     num_questions: int = 5
 
     @model_validator(mode="after")
     def _scope(self):
-        if not (self.course or self.scope_path or self.topic):
+        if not (self.course or self.scope_path or self.study_set_id or self.topic):
             raise ValueError("Provide at least a vault scope or a topic.")
         return self
 
@@ -54,6 +55,7 @@ def post_mock_exam(
         course=req.course,
         scope_path=req.scope_path,
         scope_name=req.scope_name,
+        study_set_id=req.study_set_id,
         week=req.week,
         topic=req.topic,
         num_questions=req.num_questions,

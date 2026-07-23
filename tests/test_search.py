@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.database.db import session_scope
-from app.ingestion.service import ingest
+from app.ingestion.service import ingest, ingest_single_file
 from app.models.embeddings import HashingEmbeddings
 from app.retrieval.citations import format_citation, obsidian_link
 from app.retrieval.hybrid_search import fuse, reciprocal_rank_fusion
@@ -14,6 +14,7 @@ from app.retrieval.keyword_search import build_match_query, keyword_search
 from app.retrieval.service import search
 from app.retrieval.types import MetadataFilter, SearchHit
 from app.retrieval.vector_search import vector_search
+from app.wiki import store
 
 
 def _hit(cid, trust=5, title="Doc", path="/v/Doc.md") -> SearchHit:
@@ -42,6 +43,23 @@ def test_keyword_search_finds_content(settings, db):
         hits = keyword_search(s, "reliability", limit=5)
     assert hits
     assert any("Reliability" in h.content or h.heading == "Reliability" for h in hits)
+
+
+def test_fts_index_survives_reinit(settings, db):
+    # _ensure_fts now rebuilds only on drift; re-running init_db must keep the
+    # index in sync (not wipe or duplicate it) and keep search working.
+    from sqlalchemy import text
+
+    from app.database.db import init_db
+
+    ingest(settings)
+    init_db(settings)  # runs _ensure_fts again
+    with session_scope(settings) as s:
+        chunks = s.execute(text("SELECT count(*) FROM chunks")).scalar()
+        indexed = s.execute(text("SELECT count(*) FROM chunks_fts")).scalar()
+        hits = keyword_search(s, "reliability", limit=5)
+    assert chunks == indexed
+    assert hits
 
 
 def test_keyword_search_metadata_filter(settings, db):
@@ -110,6 +128,40 @@ def test_search_service_keyword_only_when_embeddings_fail(settings, db):
     assert resp.used_vector is False
     assert resp.note and "keyword-only" in resp.note
     assert resp.hits  # keyword results still returned
+
+
+def test_course_search_includes_matching_wiki_pages(settings, db):
+    settings.vault.read_paths.append("StudyCopilot/**")
+    settings.embeddings.provider = "lmstudio"
+    settings.embeddings.base_url = "http://127.0.0.1:9/v1"
+    ingest(settings)
+    rel = store.page_rel_path("REIT6811", "concept", "Reliability Wiki", settings)
+    store.write_page(
+        rel,
+        {
+            "title": "Reliability Wiki",
+            "type": "concept",
+            "course": "REIT6811",
+            "sources": ["s1.md"],
+            "summary": "Wiki synthesis for reliability.",
+            "source_type": "ai-generated",
+            "reviewed_by_user": False,
+            "updated_at": "2026-07-07",
+        },
+        "Reliability wiki synthesis for measurement consistency.",
+        settings,
+    )
+    ingest_single_file(settings.vault.root / rel, settings=settings)
+
+    resp = search(
+        "reliability",
+        settings=settings,
+        flt=MetadataFilter(course="REIT6811"),
+        final_limit=2,
+    )
+
+    assert any("StudyCopilot/Wiki" in h.path.replace("\\", "/") for h in resp.hits)
+    assert any("StudyCopilot/Wiki" not in h.path.replace("\\", "/") for h in resp.hits)
 
 
 # ---- citations ----

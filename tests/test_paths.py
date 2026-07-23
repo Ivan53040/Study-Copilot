@@ -42,6 +42,14 @@ def test_obsidian_dir_is_denied(settings):
     assert not is_readable(plugin, settings)
 
 
+def test_trash_dir_is_denied_by_default(settings):
+    # .trash isn't in this fixture's denied_paths — the defensive default must
+    # still block it (the note editor promises .trash is never touched).
+    trashed = settings.vault.root / ".trash" / "old note.md"
+    assert is_denied(trashed, settings)
+    assert not is_readable(trashed, settings)
+
+
 def test_course_note_is_readable(settings):
     note = (
         settings.vault.root

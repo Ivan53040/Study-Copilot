@@ -79,7 +79,7 @@ def run_safety(settings: Settings | None = None) -> dict:
         ("write allowed inside StudyCopilot",
          is_writable(out / "Generated Notes" / "x.md", settings) is True),
         ("write blocked outside StudyCopilot",
-         is_writable(root / "REIT6811 - Research Methods" / "x.md", settings) is False),
+         is_writable(root / "SAMPLE101 - Research Methods" / "x.md", settings) is False),
         ("path traversal out of StudyCopilot blocked",
          is_writable(out / ".." / ".." / "x.md", settings) is False),
         (".env not readable",

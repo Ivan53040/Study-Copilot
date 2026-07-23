@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config.settings import Settings, get_settings
-from app.database.models import Base
+from app.database.models import Base, Job, TransformationTemplate
 
 # FTS5 full-text index over chunks, kept in sync via triggers. Uses an
 # external-content table so the text lives once in `chunks`.
@@ -47,14 +47,22 @@ _FTS_SQL = [
 
 
 def _ensure_fts(engine: Engine) -> None:
-    """Create the FTS5 table/triggers and (re)sync from chunks."""
+    """Create the FTS5 table/triggers and sync from chunks only when needed.
+
+    The triggers keep the index in step with every insert/update/delete, so a
+    full ``rebuild`` is only required the first time the table is created (or if
+    the index has drifted out of sync). Comparing row counts avoids an O(corpus)
+    rebuild on every startup.
+    """
     if not engine.url.get_backend_name().startswith("sqlite"):
         return
     with engine.begin() as conn:
         for stmt in _FTS_SQL:
             conn.execute(text(stmt))
-        # Rebuild from the content table so pre-existing chunks get indexed.
-        conn.execute(text("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')"))
+        chunk_count = conn.execute(text("SELECT count(*) FROM chunks")).scalar() or 0
+        fts_count = conn.execute(text("SELECT count(*) FROM chunks_fts")).scalar() or 0
+        if chunk_count != fts_count:
+            conn.execute(text("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')"))
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
@@ -100,6 +108,69 @@ def init_db(settings: Settings | None = None) -> None:
     engine = get_engine(settings)
     Base.metadata.create_all(engine)
     _ensure_fts(engine)
+    settings = settings or get_settings()
+    with session_scope(settings) as session:
+        session.query(Job).filter(Job.status == "running").update(
+            {
+                "status": "failed",
+                "error": "App restarted while this job was running.",
+            }
+        )
+        _seed_transformations(session)
+
+
+def _seed_transformations(session: Session) -> None:
+    defaults = [
+        (
+            "Lecture Summary",
+            "Summarise a lecture into exam-focused sections.",
+            "Write a concise lecture summary with key definitions, examples, and likely exam points.",
+        ),
+        (
+            "Key Concepts",
+            "Extract the core concepts and distinctions.",
+            "Extract the key concepts, definitions, common confusions, and relationships.",
+        ),
+        (
+            "Glossary",
+            "Create a glossary from the source material.",
+            "Create a glossary of important terms with short, source-grounded definitions.",
+        ),
+        (
+            "Formula Sheet",
+            "Extract formulas, steps, and calculation procedures.",
+            "Extract formulas, variables, assumptions, and worked-procedure steps.",
+        ),
+        (
+            "Flashcards",
+            "Generate compact revision cards.",
+            "Generate question/answer flashcards grouped by concept.",
+        ),
+        (
+            "Rubric Extractor",
+            "Extract marking criteria and deliverable expectations.",
+            "Extract rubric criteria, submission requirements, and what a strong answer includes.",
+        ),
+        (
+            "Exam Theme Extractor",
+            "Find repeated exam themes and question styles.",
+            "Extract recurring exam themes, likely question forms, and evidence from the source.",
+        ),
+    ]
+    existing = {
+        row[0]
+        for row in session.query(TransformationTemplate.name).all()
+    }
+    for name, description, prompt in defaults:
+        if name not in existing:
+            session.add(
+                TransformationTemplate(
+                    name=name,
+                    description=description,
+                    prompt=prompt,
+                    apply_default=False,
+                )
+            )
 
 
 def get_session(settings: Settings | None = None) -> Session:

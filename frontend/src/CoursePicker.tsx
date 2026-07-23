@@ -59,17 +59,24 @@ export function CoursePicker({
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    api
-      .scopes()
-      .then((result) =>
-        setScopes(
-          result.scopes.filter(
-            (scope) =>
-              scopeDepth(scope) <= maxDepth &&
-              (!courseOnly || scope.kind === "course"),
-          ),
-        ),
-      )
+    Promise.all([api.scopes(), courseOnly ? Promise.resolve({ study_sets: [] }) : api.studySets()])
+      .then(([scopeResult, setResult]) => {
+        const base = scopeResult.scopes.filter(
+          (scope) =>
+            scopeDepth(scope) <= maxDepth &&
+            (!courseOnly || scope.kind === "course"),
+        );
+        const savedSets = setResult.study_sets.map((set) => ({
+          id: `study-set:${set.id}`,
+          name: set.name,
+          kind: "study_set" as const,
+          course: set.course,
+          path: set.scope_path ?? "",
+          documents: set.items.filter((item) => item.kind === "document").length,
+          study_set_id: set.id,
+        }));
+        setScopes([...savedSets, ...base]);
+      })
       .catch(() => {});
   }, [courseOnly, maxDepth]);
 
@@ -110,7 +117,13 @@ export function CoursePicker({
             >
               <span>
                 <strong>{scope.name}</strong>
-                <small>{scope.kind === "course" ? "Course" : "Vault folder"}</small>
+                <small>
+                  {scope.kind === "course"
+                    ? "Course"
+                    : scope.kind === "study_set"
+                      ? "Study set"
+                      : "Vault folder"}
+                </small>
               </span>
               <small>{scope.documents} docs</small>
             </button>

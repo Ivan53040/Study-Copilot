@@ -103,6 +103,22 @@ def test_write_note_creates_backup(vault):
     assert read_note("A.md", vault)["content"].strip().endswith("edited body")
 
 
+def test_backup_versions_are_capped(vault):
+    vault.workspace.max_backups_per_note = 2
+    for i in range(5):
+        write_note("A.md", f"# A title\n\nrevision {i}\n", vault)
+    # Pruning keeps at most the cap, so backups can't grow without bound.
+    assert len(list_versions("A.md", vault)) <= 2
+
+
+def test_edit_updates_backlinks(vault):
+    # Cache-invalidation check: editing B to drop its [[A]] link must remove
+    # A's backlink on the next read (the link graph is mtime/size-cached).
+    assert any(bl["path"] == "B.md" for bl in read_note("A.md", vault)["backlinks"])
+    write_note("B.md", "# B\n\nno more link.\n", vault)
+    assert not any(bl["path"] == "B.md" for bl in read_note("A.md", vault)["backlinks"])
+
+
 def test_write_blocked_for_denied_and_traversal(vault):
     with pytest.raises(PathSecurityError):
         write_note(".env", "x", vault)

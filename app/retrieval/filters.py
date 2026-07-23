@@ -14,6 +14,13 @@ def metadata_clause(flt: MetadataFilter, params: dict, alias: str = "c") -> str:
     if flt.path_prefix:
         clauses.append("lower(replace(d.path, '\\', '/')) LIKE :path_prefix")
         params["path_prefix"] = flt.path_prefix.replace("\\", "/").lower().rstrip("/") + "/%"
+    if flt.document_ids:
+        keys = []
+        for index, document_id in enumerate(flt.document_ids):
+            key = f"document_id_{index}"
+            keys.append(f":{key}")
+            params[key] = document_id
+        clauses.append(f"c.document_id IN ({', '.join(keys)})")
     if flt.week is not None:
         clauses.append(f"{alias}.week = :week")
         params["week"] = flt.week
