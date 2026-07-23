@@ -23,6 +23,10 @@ flowchart LR
 
 _The desktop workspace provides navigation for notes, lecture materials, voice notes, planning, search, wiki generation, quizzes, progress, and past papers._
 
+![Study Copilot grounded AI chat with a cited course note](docs/screenshots/study-copilot-ai-chat.png)
+
+_The grounded chat workflow lets a student select source material, combine manual context with retrieval, ask a question, and inspect the cited note and trust metadata beside the answer._
+
 ## Status
 
 | Phase | Description | State |
