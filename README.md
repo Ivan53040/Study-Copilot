@@ -19,6 +19,10 @@ flowchart LR
     F --> G
 ```
 
+![Study Copilot quiz workspace](docs/screenshots/study-copilot-quiz.png)
+
+_The desktop workspace provides navigation for notes, lecture materials, voice notes, planning, search, wiki generation, quizzes, progress, and past papers._
+
 ## Status
 
 | Phase | Description | State |
