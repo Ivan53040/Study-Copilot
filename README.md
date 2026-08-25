@@ -1,9 +1,30 @@
 # Study Copilot
 
-A local-first AI study assistant over an Obsidian vault. It ingests your course
-materials, past papers and notes; will answer source-grounded questions, generate
-revision notes and quizzes, track concept-level progress, and write outputs back
-into a dedicated `StudyCopilot/` folder — **never** modifying your original notes.
+**A private, local-first AI study workspace for an Obsidian vault.** Study
+Copilot turns course notes, lecture slides and past papers into source-grounded
+answers, revision notes, quizzes, study plans and mock exams. The default AI
+path runs through a local OpenAI-compatible LLM, so study material does not need
+to leave the machine.
+
+Unlike a general-purpose chatbot, Study Copilot keeps the full learning loop in
+one place: retrieve the right evidence, show where every answer came from,
+practise the concept, record confidence, and use that history to decide what to
+study next. Generated files are confined to a dedicated `StudyCopilot/` folder;
+original notes are never overwritten.
+
+## What makes it different
+
+- **Local LLM by default** — works with LM Studio and other OpenAI-compatible
+  local endpoints; cloud providers remain optional.
+- **Grounded, inspectable answers** — hybrid SQLite FTS5 + vector retrieval,
+  inline `[S#]` citations, source trust metadata, and post-generation citation
+  validation.
+- **More than chat** — quizzes, marking, concept confidence, spaced repetition,
+  daily plans, weak-topic reports, revision notes and past-paper-style exams all
+  share the same course context.
+- **Obsidian-native and privacy-aware** — reads the configured vault, preserves
+  wikilinks and backlinks, blocks denied paths, and limits generated write-back
+  to the safe output area.
 
 The architecture and key engineering decisions are documented in
 [`docs/architecture.md`](docs/architecture.md).
@@ -19,13 +40,14 @@ flowchart LR
     F --> G
 ```
 
-![Study Copilot quiz workspace](docs/screenshots/study-copilot-quiz.png)
-
-_The desktop workspace provides navigation for notes, lecture materials, voice notes, planning, search, wiki generation, quizzes, progress, and past papers._
-
 ![Study Copilot grounded AI chat with a cited course note](docs/screenshots/study-copilot-ai-chat.png)
 
 _The grounded chat workflow lets a student select source material, combine manual context with retrieval, ask a question, and inspect the cited note and trust metadata beside the answer._
+
+![Study Copilot connected to a local LLM](docs/screenshots/study-copilot-local-llm.png)
+
+_Local model configuration is visible and testable inside the app. Each AI task
+can inherit the local default or use its own model override._
 
 ## Status
 
@@ -86,6 +108,11 @@ Manual sync:
 python -m scripts.sync --dry-run   # preview, change nothing
 python -m scripts.sync             # sync now
 ```
+
+When `sync.enabled` is true, Study Copilot runs one sync before opening the
+workspace. The packaged desktop app also runs one sync after it closes. Set
+`sync.run_in_app: false` to use only these open/close syncs; set it to true to
+add interval syncs while the app remains open.
 
 ### Run sync automatically (Windows Scheduled Task)
 
