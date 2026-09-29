@@ -162,7 +162,7 @@ test("Quiz me on this: a quiz from an answer's sources, marked, then tracked on 
 
 test("appearance and quick open", async ({ page }) => {
   await page.goto("/");
-  await page.getByTitle("Settings").click();
+  await page.getByTitle("Settings", { exact: true }).click();
   await page.getByRole("radio", { name: /Ocean/ }).click();
   await expect(page.locator("html")).toHaveAttribute("data-palette", "ocean");
 

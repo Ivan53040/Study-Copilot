@@ -840,8 +840,10 @@ th { color: var(--muted); font-weight: 600; }
 .local-graph-header button.active,
 .local-graph-header button:hover { color: var(--accent); border-color: var(--accent); }
 .local-graph-canvas { flex: 1; min-height: 0; }
-.find-bar { display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.find-bar input { min-width: 120px; flex: 1; }
+/* Wraps instead of spilling under the outline panel when the column is narrow. */
+.find-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.find-bar input { min-width: 100px; flex: 1 1 140px; }
+.find-bar button { white-space: nowrap; }
 .drop-overlay {
   position: absolute;
   inset: 12px;
