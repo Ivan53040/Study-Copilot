@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from app.config.settings import Settings, get_settings
 from app.security.paths import PathSecurityError
+from app.vault import index as vault_index
 from app.vault.service import (
     build_graph,
     create_folder,
+    note_links,
     copy_note,
     delete_note,
     export_pdf,
@@ -113,8 +115,12 @@ class BacklinkReviewReq(BaseModel):
     aliases: list[str] = []
 
 
-@router.get("/tree")
-def get_tree(settings: Settings = Depends(get_settings)) -> dict:
+@router.get("/tree", response_model=None)
+def get_tree(settings: Settings = Depends(get_settings)) -> dict | Response:
+    index = vault_index.get(settings)
+    if index is not None:
+        # Pre-serialised once per vault change: no per-request JSON encoding.
+        return Response(content=index.tree_json(), media_type="application/json")
     return list_tree(settings)
 
 
@@ -154,10 +160,25 @@ def post_format_preview(
 
 @router.get("/note")
 def get_note(
-    path: str = Query(...), settings: Settings = Depends(get_settings)
+    path: str = Query(...),
+    links: bool = Query(True, description="false = text only; fetch /vault/note-links after"),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     try:
-        return read_note(path, settings)
+        return read_note(path, settings, with_links=links)
+    except PathSecurityError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/note-links")
+def get_note_links(
+    path: str = Query(...), settings: Settings = Depends(get_settings)
+) -> dict:
+    """A note's resolved outgoing links and backlinks (paired with ?links=false)."""
+    try:
+        return note_links(path, settings)
     except PathSecurityError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:

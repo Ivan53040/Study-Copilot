@@ -86,3 +86,43 @@ def test_refuses_missing_icloud_root(tmp_path: Path):
     )
     with pytest.raises(SyncError, match="icloud_root"):
         sync_to_icloud(s)
+
+
+def _serve_json(body: dict):
+    """A tiny HTTP server on a free port that answers every GET with ``body``."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    payload = json.dumps(body).encode("utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if self.path != "/health":
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def test_desktop_app_running_recognises_study_copilot_only():
+    other = _serve_json({"ok": True, "model": "some-other-server"})
+    ours = _serve_json({"status": "ok", "vault_root": "C:/vault", "vault_exists": True})
+    try:
+        # Another program on the port must not block syncing.
+        assert desktop_app_running(port=other.server_address[1], timeout=0.2) is False
+        assert desktop_app_running(port=ours.server_address[1], timeout=0.2) is True
+    finally:
+        other.shutdown()
+        ours.shutdown()

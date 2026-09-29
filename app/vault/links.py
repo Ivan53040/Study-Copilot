@@ -119,10 +119,17 @@ def get_mentions(
     # Custom word boundaries: titles can start/end with non-word characters.
     mention_res = _mention_patterns(names)
 
+    # Cheap pre-filter: a note can only mention this one (linked or not) if it
+    # contains one of the names somewhere, so skip every other note before the
+    # per-line scan. Most of the vault is skipped this way.
+    any_name = re.compile("|".join(re.escape(name) for name in names), re.IGNORECASE) if names else None
+
     linked: list[dict] = []
     unlinked: list[dict] = []
     for rel, text in sorted(_vault_texts(settings).items()):
         if rel == relpath:
+            continue
+        if any_name is None or not any_name.search(text):
             continue
         lines = text.split("\n")
         body_start = _frontmatter_end(lines)

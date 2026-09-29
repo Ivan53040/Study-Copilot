@@ -3,6 +3,8 @@ import type {
   AppSettings,
   BacklinkSearchResponse,
   ChatResponse,
+  ConversationDetail,
+  ConversationSummary,
   ConceptProgress,
   CourseSummary,
   DailyPlan,
@@ -40,7 +42,10 @@ import type {
 } from "./types";
 
 // Calls go through the Vite proxy (/api -> backend). Override with VITE_API_BASE.
-const BASE = import.meta.env.VITE_API_BASE ?? "/api";
+// `npm run build:web` (mode "web", used by the one-click launcher) is served by
+// the backend itself, so API calls go to the same origin with no prefix.
+const BASE =
+  import.meta.env.MODE === "web" ? "" : (import.meta.env.VITE_API_BASE ?? "/api");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -230,6 +235,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  conversations: (limit = 50) =>
+    request<{ conversations: ConversationSummary[] }>(`/conversations?limit=${limit}`),
+
+  conversation: (id: number) => request<ConversationDetail>(`/conversations/${id}`),
+
+  renameConversation: (id: number, title: string) =>
+    request<{ id: number; title: string | null }>(`/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+
+  deleteConversation: (id: number) =>
+    request<{ deleted: number }>(`/conversations/${id}`, { method: "DELETE" }),
+
   generateNote: (body: {
     course?: string | null;
     scope_path?: string | null;
@@ -378,8 +397,16 @@ export const api = {
       },
     ),
 
-  vaultNote: (path: string) =>
-    request<VaultNote>(`/vault/note?path=${encodeURIComponent(path)}`),
+  vaultNote: (path: string, options: { links?: boolean } = {}) =>
+    request<VaultNote>(
+      `/vault/note?path=${encodeURIComponent(path)}${options.links === false ? "&links=false" : ""}`,
+    ),
+
+  /** Resolved outgoing links + backlinks, fetched separately so text shows first. */
+  vaultNoteLinks: (path: string) =>
+    request<Pick<VaultNote, "path" | "links" | "backlinks">>(
+      `/vault/note-links?path=${encodeURIComponent(path)}`,
+    ),
 
   vaultSaveNote: (path: string, content: string) =>
     request<{ path: string; written: boolean; backup: string | null }>(

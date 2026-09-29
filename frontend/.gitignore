@@ -11,3 +11,6 @@ vite.config.d.ts
 # Tauri / Rust build output
 src-tauri/target/
 src-tauri/gen/
+
+# One-click launcher build (npm run build:web)
+dist-web/

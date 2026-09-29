@@ -1,93 +1,46 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppSettings, Job } from "../types";
+import { Icon } from "../icons";
+import {
+  type Appearance,
+  type ThemeMode,
+  DEFAULT_APPEARANCE,
+  PALETTES,
+  applyAppearance,
+  loadAppearance,
+  resolveTheme,
+  saveAppearance,
+} from "../theme";
 
-export type Appearance = {
-  material: "solid" | "liquid-glass";
-  accent: string;
-  background: string;
-  panel: string;
-  panel2: string;
-  border: string;
-  text: string;
-  muted: string;
-  fontSize: number;
-};
-
-export const APPEARANCE_PRESETS: { name: string; description: string; colors: Appearance }[] = [
-  {
-    name: "Midnight",
-    description: "Study Copilot blue",
-    colors: {
-      material: "solid",
-      accent: "#6ea8fe", background: "#0f1117", panel: "#171a23",
-      panel2: "#1e222e", border: "#2a2f3d", text: "#e6e8ee", muted: "#9aa3b2",
-      fontSize: 14,
-    },
-  },
-  {
-    name: "Liquid Glass",
-    description: "Luminous translucent glass",
-    colors: {
-      material: "liquid-glass",
-      accent: "#8fd7ff", background: "#07101c", panel: "#d9efff",
-      panel2: "#9fcce4", border: "#e4f5ff", text: "#f7fbff", muted: "#b5c9d8",
-      fontSize: 14,
-    },
-  },
-  {
-    name: "Obsidian",
-    description: "Charcoal and violet",
-    colors: {
-      material: "solid",
-      accent: "#a78bfa", background: "#191919", panel: "#202020",
-      panel2: "#2a2a2a", border: "#3a3a3a", text: "#dcddde", muted: "#999999",
-      fontSize: 14,
-    },
-  },
-  {
-    name: "Nord",
-    description: "Cool polar blue",
-    colors: {
-      material: "solid",
-      accent: "#88c0d0", background: "#2e3440", panel: "#3b4252",
-      panel2: "#434c5e", border: "#4c566a", text: "#eceff4", muted: "#b8c1d1",
-      fontSize: 14,
-    },
-  },
-  {
-    name: "Forest",
-    description: "Quiet deep green",
-    colors: {
-      material: "solid",
-      accent: "#7ccf98", background: "#111a16", panel: "#18251e",
-      panel2: "#213128", border: "#30483a", text: "#e4eee8", muted: "#9bb2a3",
-      fontSize: 14,
-    },
-  },
-  {
-    name: "Paper",
-    description: "Warm reading theme",
-    colors: {
-      material: "solid",
-      accent: "#a05a2c", background: "#f4efe5", panel: "#fffaf0",
-      panel2: "#ebe3d4", border: "#d2c6b4", text: "#302a24", muted: "#756b60",
-      fontSize: 14,
-    },
-  },
-  {
-    name: "Snow",
-    description: "Clean white theme",
-    colors: {
-      material: "solid",
-      accent: "#2563eb", background: "#f5f7fb", panel: "#ffffff",
-      panel2: "#edf1f7", border: "#d5dbe6", text: "#18202c", muted: "#687386",
-      fontSize: 14,
-    },
-  },
+const THEME_OPTIONS: { id: ThemeMode; label: string; icon: string }[] = [
+  { id: "light", label: "Light", icon: "sun" },
+  { id: "dark", label: "Dark", icon: "moon" },
+  { id: "system", label: "Match system", icon: "monitor" },
 ];
 
-const DEFAULT_APPEARANCE: Appearance = APPEARANCE_PRESETS[0].colors;
+/** Inline colours for the Light / Dark / System previews, in the chosen palette. */
+function modePreview(paletteId: string, mode: ThemeMode) {
+  const palette = PALETTES.find((item) => item.id === paletteId) ?? PALETTES[0];
+  const split = (a: string, b: string) => `linear-gradient(135deg, ${a} 50%, ${b} 50%)`;
+  if (mode === "system") {
+    const { light, dark } = palette;
+    return {
+      thumb: { background: split(light.bg, dark.bg) },
+      side: { background: split(light.sidebar, dark.sidebar) },
+      main: { background: "transparent" },
+      bubble: { background: split(light.panel, dark.panel) },
+    };
+  }
+  const swatch = palette[mode];
+  return {
+    thumb: {},
+    side: { background: swatch.sidebar },
+    main: { background: swatch.bg },
+    bubble: { background: swatch.panel },
+  };
+}
+
 const TASK_MODEL_LABELS: Array<[keyof AppSettings["task_models"], string]> = [
   ["chat", "Chat"],
   ["visual_pages", "Visual page indexing"],
@@ -98,63 +51,13 @@ const TASK_MODEL_LABELS: Array<[keyof AppSettings["task_models"], string]> = [
   ["voice_notes", "Voice notes"],
 ];
 
-export function applyAppearance(value: Appearance) {
-  const liquidGlass = value.material === "liquid-glass";
-  document.documentElement.dataset.appearance = liquidGlass ? "liquid-glass" : "solid";
-  const root = document.documentElement.style;
-  root.setProperty("--theme-background", value.background);
-  root.setProperty("--theme-panel", value.panel);
-  root.setProperty("--theme-panel-2", value.panel2);
-  root.setProperty("--theme-border", value.border);
-  root.setProperty("--accent", value.accent);
-  root.setProperty("--accent-2", value.accent);
-  root.setProperty("--bg", value.background);
-  root.setProperty(
-    "--panel",
-    liquidGlass ? `color-mix(in srgb, ${value.panel} 17%, transparent)` : value.panel,
-  );
-  root.setProperty(
-    "--panel-2",
-    liquidGlass ? `color-mix(in srgb, ${value.panel2} 13%, transparent)` : value.panel2,
-  );
-  root.setProperty(
-    "--border",
-    liquidGlass ? `color-mix(in srgb, ${value.border} 28%, transparent)` : value.border,
-  );
-  root.setProperty("--text", value.text);
-  root.setProperty("--muted", value.muted);
-  root.setProperty("--base-font-size", `${value.fontSize}px`);
-}
-
-const LEGACY_APPEARANCE: Appearance = {
-  material: "solid",
-  accent: "#6ea8fe",
-  background: "#0f1117",
-  panel: "#171a23",
-  panel2: "#1e222e",
-  border: "#2a2f3d",
-  text: "#e6e8ee",
-  muted: "#9aa3b2",
-  fontSize: 14,
-};
-
-export function loadAppearance(): Appearance {
-  try {
-    const stored = JSON.parse(
-      localStorage.getItem("study-copilot-appearance") ?? "{}",
-    ) as Partial<Appearance>;
-    return {
-      ...DEFAULT_APPEARANCE,
-      ...LEGACY_APPEARANCE,
-      ...stored,
-      material: stored.material === "liquid-glass" ? "liquid-glass" : "solid",
-    };
-  } catch {
-    return DEFAULT_APPEARANCE;
-  }
-}
-
-export function SettingsPage({ onSaved }: { onSaved: () => void }) {
+export function SettingsPage({
+  onSaved,
+  onAppearanceChange,
+}: {
+  onSaved: () => void;
+  onAppearanceChange?: (value: Appearance) => void;
+}) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [appearance, setAppearance] = useState(loadAppearance);
   const [message, setMessage] = useState("");
@@ -237,15 +140,9 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   const updateAppearance = (next: Appearance) => {
     setAppearance(next);
     applyAppearance(next);
-    localStorage.setItem("study-copilot-appearance", JSON.stringify(next));
+    saveAppearance(next);
+    onAppearanceChange?.(next);
   };
-
-  const isActiveAppearance = (preset: (typeof APPEARANCE_PRESETS)[number]) =>
-    preset.colors.material === appearance.material &&
-    preset.colors.accent === appearance.accent &&
-    preset.colors.background === appearance.background &&
-    preset.colors.panel === appearance.panel &&
-    preset.colors.text === appearance.text;
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -605,30 +502,87 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       <section className="settings-section card">
         <div>
           <h2>Appearance</h2>
-          <p className="muted">Choose a colour theme or the Liquid Glass material, then customise its colours and text size. Changes are saved on this device.</p>
+          <p className="muted">Colour theme, light or dark, reading font and text size. Saved on this device.</p>
         </div>
         <div className="appearance-controls">
-          <div className="theme-presets">
-            {APPEARANCE_PRESETS.map((preset) => (
-              <button
-                type="button"
-                className={`theme-preset${preset.colors.material === "liquid-glass" ? " liquid-glass-preset" : ""}${isActiveAppearance(preset) ? " active" : ""}`}
-                key={preset.name}
-                onClick={() => updateAppearance({ ...preset.colors, fontSize: appearance.fontSize })}
-                title={preset.description}
-                aria-pressed={isActiveAppearance(preset)}
-              >
-                <span className="theme-swatches">
-                  <i style={{ background: preset.colors.background }} />
-                  <i style={{ background: preset.colors.panel }} />
-                  <i style={{ background: preset.colors.accent }} />
-                </span>
-                <span><strong>{preset.name}</strong><small>{preset.description}</small></span>
-              </button>
-            ))}
+          <div className="field">
+            <span>Colour theme</span>
+            <div className="palette-cards" role="radiogroup" aria-label="Colour theme">
+              {PALETTES.map((palette) => {
+                const swatch = palette[resolveTheme(appearance.theme)];
+                const active = appearance.palette === palette.id;
+                return (
+                  <button
+                    type="button"
+                    key={palette.id}
+                    role="radio"
+                    aria-checked={active}
+                    className={`palette-card${active ? " active" : ""}`}
+                    onClick={() => updateAppearance({ ...appearance, palette: palette.id })}
+                  >
+                    <span className="palette-preview" style={{ background: swatch.bg }}>
+                      <i className="pp-side" style={{ background: swatch.sidebar }} />
+                      <i className="pp-main">
+                        <i className="pp-bubble" style={{ background: swatch["user-bubble"] }} />
+                        <i className="pp-card" style={{ background: swatch.panel }}>
+                          <i className="pp-dot" style={{ background: swatch.accent }} />
+                        </i>
+                      </i>
+                    </span>
+                    <span className="palette-label">
+                      <b>{palette.label}</b>
+                      <small>{palette.note}</small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="field">
+            <span>Mode</span>
+            <div className="theme-cards">
+              {THEME_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  key={option.id}
+                  className={`theme-card${appearance.theme === option.id ? " active" : ""}`}
+                  aria-pressed={appearance.theme === option.id}
+                  onClick={() => updateAppearance({ ...appearance, theme: option.id })}
+                >
+                  <span className={`theme-thumb ${option.id}`} style={modePreview(appearance.palette, option.id).thumb}>
+                    <i className="tt-side" style={modePreview(appearance.palette, option.id).side} />
+                    <i className="tt-main" style={modePreview(appearance.palette, option.id).main}>
+                      <i className="tt-bubble" style={modePreview(appearance.palette, option.id).bubble} />
+                    </i>
+                  </span>
+                  <span className="theme-label"><Icon name={option.icon} size={14} />{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <span>Reading font</span>
+            <div className="font-cards">
+              {([
+                ["serif", "Serif", "Calm, book-like answers and notes", "var(--font-serif)"],
+                ["sans", "Sans", "Matches the interface font", "var(--font-sans)"],
+              ] as const).map(([id, label, hint, family]) => (
+                <button
+                  type="button"
+                  key={id}
+                  className={`font-card${appearance.readingFont === id ? " active" : ""}`}
+                  aria-pressed={appearance.readingFont === id}
+                  onClick={() => updateAppearance({ ...appearance, readingFont: id })}
+                >
+                  <b style={{ fontFamily: family }}>Aa</b>
+                  <span>{label}</span>
+                  <small>{hint}</small>
+                </button>
+              ))}
+            </div>
           </div>
           <label className="field font-size-field">
-            <span>Font size: {appearance.fontSize}px</span>
+            <span>Text size · {appearance.fontSize}px</span>
             <input
               type="range"
               min="12"
@@ -640,21 +594,22 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
               }
             />
           </label>
-          <div className="color-grid">
-            {([
-              ["accent", "Accent"],
-              ["background", "Background"],
-              ["panel", "Panels"],
-              ["text", "Text"],
-            ] as const).map(([key, label]) => (
-              <label className="color-field" key={key}>
-                <input type="color" value={appearance[key]} onChange={(e) => updateAppearance({ ...appearance, [key]: e.target.value })} />
-                <span>{label}</span>
-                <code>{appearance[key]}</code>
-              </label>
-            ))}
+          <label className="field">
+            <span>What should Study Copilot call you?</span>
+            <input
+              value={appearance.name}
+              maxLength={40}
+              placeholder="Used in the greeting on a new chat"
+              onChange={(event) => updateAppearance({ ...appearance, name: event.target.value })}
+              onKeyDown={(event) => {
+                // Saved instantly; Enter must not submit (and re-index) the settings form.
+                if (event.key === "Enter") event.preventDefault();
+              }}
+            />
+          </label>
+          <div>
+            <button type="button" onClick={() => updateAppearance({ ...DEFAULT_APPEARANCE, name: appearance.name })}>Reset appearance</button>
           </div>
-          <button type="button" onClick={() => updateAppearance(DEFAULT_APPEARANCE)}>Reset appearance</button>
         </div>
       </section>
 

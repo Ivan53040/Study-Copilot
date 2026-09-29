@@ -11,12 +11,17 @@ import rehypeRaw from "rehype-raw";
 import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
 
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "dark",
-  securityLevel: "loose",
-  fontFamily: "inherit",
-});
+// Mermaid themes follow the app's colour mode (re-initialised before each render).
+// Initialise once at load too, so Mermaid never auto-runs on window load.
+mermaid.initialize({ startOnLoad: false });
+function initMermaid() {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: document.documentElement.dataset.theme === "dark" ? "dark" : "neutral",
+    securityLevel: "loose",
+    fontFamily: "inherit",
+  });
+}
 
 export function nodeText(children: React.ReactNode): string {
   if (typeof children === "string") return children;
@@ -32,6 +37,7 @@ function Mermaid({ code }: { code: string }) {
   useEffect(() => {
     let alive = true;
     const id = "mmd-" + Math.random().toString(36).slice(2);
+    initMermaid();
     mermaid
       .render(id, code)
       .then(({ svg }) => {

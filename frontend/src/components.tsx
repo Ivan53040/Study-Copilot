@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./api";
+import { Icon } from "./icons";
 import type { Citation } from "./types";
 
-const TRUST_LABEL: Record<number, string> = {
+export const TRUST_LABEL: Record<number, string> = {
   1: "official",
   2: "rubric",
   3: "past-paper",
@@ -15,25 +17,68 @@ const TRUST_LABEL: Record<number, string> = {
 
 export function TrustBadge({ level }: { level: number }) {
   return (
-    <span className={`badge trust${level}`}>
-      trust {level} · {TRUST_LABEL[level] ?? "?"}
+    <span className={`badge trust${level}`} title={`Trust level ${level}`}>
+      {TRUST_LABEL[level] ?? `trust ${level}`}
     </span>
+  );
+}
+
+/** True when a cited page can be shown as an image (PDF / slide decks). */
+export function hasPageImage(path: string, documentId?: number | null, page?: number | null) {
+  return documentId != null && page != null && /\.(pdf|pptx|ppt)$/i.test(path);
+}
+
+export function SourcePageViewer({
+  documentId,
+  page,
+  title,
+  onClose,
+}: {
+  documentId: number;
+  page: number;
+  title: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  // Portal to <body> so an animated/transformed ancestor can't trap the overlay.
+  return createPortal(
+    <div className="lecture-viewer-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="lecture-viewer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${title}, page ${page}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="lecture-viewer-toolbar">
+          <div className="lecture-viewer-title"><span>{title} · Page {page}</span></div>
+          <button type="button" className="icon-btn" aria-label="Close page" onClick={onClose}>
+            <Icon name="x" />
+          </button>
+        </header>
+        <div className="lecture-viewer-canvas">
+          <img
+            src={api.sourcePageUrl(documentId, page)}
+            alt={`${title}, page ${page}`}
+            style={{ maxWidth: "100%" }}
+          />
+        </div>
+      </section>
+    </div>,
+    document.body,
   );
 }
 
 export function CitationLine({ cite }: { cite: Citation }) {
   const [showPage, setShowPage] = useState(false);
-  useEffect(() => {
-    if (!showPage) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setShowPage(false);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [showPage]);
   const wk = cite.week != null ? ` · Week ${cite.week}` : "";
-  const hasPage = cite.document_id != null && cite.page_number != null &&
-    /\.(pdf|pptx|ppt)$/i.test(cite.path);
+  const hasPage = hasPageImage(cite.path, cite.document_id, cite.page_number);
   return (
     <div className="cite">
       {hasPage ? (
@@ -45,17 +90,12 @@ export function CitationLine({ cite }: { cite: Citation }) {
       {cite.course ? ` · ${cite.course}${wk}` : ""}{" "}
       <TrustBadge level={cite.trust_level} />
       {showPage && hasPage && (
-        <div className="lecture-viewer-backdrop" role="presentation" onClick={() => setShowPage(false)}>
-          <section className="lecture-viewer" role="dialog" aria-modal="true" aria-label={`${cite.title}, page ${cite.page_number}`} onClick={(event) => event.stopPropagation()}>
-            <header className="lecture-viewer-toolbar">
-              <div className="lecture-viewer-title"><span>{cite.title} · Page {cite.page_number}</span></div>
-              <button type="button" className="lecture-viewer-close" aria-label="Close page" onClick={() => setShowPage(false)}>×</button>
-            </header>
-            <div className="lecture-viewer-canvas">
-              <img src={api.sourcePageUrl(cite.document_id!, cite.page_number!)} alt={`${cite.title}, page ${cite.page_number}`} style={{ maxWidth: "100%" }} />
-            </div>
-          </section>
-        </div>
+        <SourcePageViewer
+          documentId={cite.document_id!}
+          page={cite.page_number!}
+          title={cite.title}
+          onClose={() => setShowPage(false)}
+        />
       )}
     </div>
   );
@@ -68,4 +108,32 @@ export function Warnings({ items }: { items: string[] }) {
       ⚠ {items.join(" · ")}
     </div>
   );
+}
+
+/** Close a popover on outside click or Escape. */
+export function useDismiss(
+  open: boolean,
+  onClose: () => void,
+  refs: RefObject<HTMLElement>[],
+) {
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (refs.some((ref) => ref.current?.contains(target))) return;
+      latest.current();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") latest.current();
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 }

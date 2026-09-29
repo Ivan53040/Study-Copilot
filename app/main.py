@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.api import (
@@ -34,6 +36,7 @@ from app.config.settings import get_settings
 from app.database.db import init_db
 from app.logging_config import get_logger
 from app.sync.scheduler import SyncScheduler
+from app.vault import index as vault_index
 from app.vault.service import warm_note_cache
 
 logger = get_logger("app")
@@ -56,6 +59,9 @@ async def lifespan(app: FastAPI):
         scheduler.run_once_in_background()
         if settings.sync.run_in_app:
             scheduler.start()
+    # Keep an in-memory index of the vault, refreshed by a file watcher, so
+    # tree / note / search requests never walk the disk (Obsidian-style).
+    vault_index.enable(settings)
     # Fill the note/link cache in the background so the first open is instant.
     threading.Thread(
         target=warm_note_cache,
@@ -66,6 +72,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        vault_index.disable()
         if app.state.sync_scheduler is not None:
             app.state.sync_scheduler.stop()
 
@@ -107,6 +114,12 @@ def create_app() -> FastAPI:
     app.include_router(voice_notes.router)
     app.include_router(wiki.router)
     app.include_router(settings.router)
+
+    # One-click launcher mode (scripts/launcher.ps1): also serve the built
+    # interface from this same origin. Mounted last, so API routes always win.
+    web_dir = os.environ.get("STUDY_COPILOT_WEB_DIR")
+    if web_dir and os.path.isfile(os.path.join(web_dir, "index.html")):
+        app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
     return app
 
 

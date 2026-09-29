@@ -43,21 +43,9 @@ function scopeDepth(scope: VaultScope) {
   return relative.split("/").filter(Boolean).length;
 }
 
-export function CoursePicker({
-  value,
-  onChange,
-  courseOnly = false,
-  maxDepth = 2,
-}: {
-  value: VaultScope | null;
-  onChange: (scope: VaultScope) => void;
-  courseOnly?: boolean;
-  maxDepth?: number;
-}) {
+/** Courses, vault folders and saved study sets the user can scope work to. */
+export function useScopes({ courseOnly = false, maxDepth = 2 } = {}) {
   const [scopes, setScopes] = useState<VaultScope[]>([]);
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-
   useEffect(() => {
     Promise.all([api.scopes(), courseOnly ? Promise.resolve({ study_sets: [] }) : api.studySets()])
       .then(([scopeResult, setResult]) => {
@@ -79,13 +67,38 @@ export function CoursePicker({
       })
       .catch(() => {});
   }, [courseOnly, maxDepth]);
+  return scopes;
+}
 
-  const ranked = useMemo(
-    () =>
-      [...scopes]
-        .sort((a, b) => score(a, query) - score(b, query) || a.name.localeCompare(b.name)),
-    [scopes, query],
+export function rankScopes(scopes: VaultScope[], query: string) {
+  return [...scopes].sort(
+    (a, b) => score(a, query) - score(b, query) || a.name.localeCompare(b.name),
   );
+}
+
+export function scopeKindLabel(scope: VaultScope) {
+  return scope.kind === "course"
+    ? "Course"
+    : scope.kind === "study_set"
+      ? "Study set"
+      : "Vault folder";
+}
+
+export function CoursePicker({
+  value,
+  onChange,
+  courseOnly = false,
+  maxDepth = 2,
+}: {
+  value: VaultScope | null;
+  onChange: (scope: VaultScope) => void;
+  courseOnly?: boolean;
+  maxDepth?: number;
+}) {
+  const scopes = useScopes({ courseOnly, maxDepth });
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const ranked = useMemo(() => rankScopes(scopes, query), [scopes, query]);
 
   return (
     <div className="course-picker">
@@ -117,13 +130,7 @@ export function CoursePicker({
             >
               <span>
                 <strong>{scope.name}</strong>
-                <small>
-                  {scope.kind === "course"
-                    ? "Course"
-                    : scope.kind === "study_set"
-                      ? "Study set"
-                      : "Vault folder"}
-                </small>
+                <small>{scopeKindLabel(scope)}</small>
               </span>
               <small>{scope.documents} docs</small>
             </button>

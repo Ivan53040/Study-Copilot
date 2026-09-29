@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+from collections import Counter
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
@@ -11,7 +13,7 @@ from sqlalchemy import func, select
 from app.config.settings import Settings, get_settings
 from app.database.db import session_scope
 from app.database.models import Chunk, Document
-from app.security.paths import is_denied
+from app.vault.service import visible_folders
 
 router = APIRouter(tags=["courses"])
 _COURSE_RE = re.compile(r"(?<![A-Z0-9])([A-Z]{3,4})\s?(\d{4})(?!\d)", re.I)
@@ -25,10 +27,21 @@ def _course_from_folder(folder: Path, root: Path) -> str | None:
     return None
 
 
-def _document_count(documents: list[Document], folder: Path) -> int:
-    return sum(
-        1 for document in documents if Path(document.path).is_relative_to(folder)
-    )
+def _folder_document_counts(paths: list[str], root: Path) -> Counter:
+    """How many indexed documents sit anywhere below each vault folder.
+
+    One pass over the documents (counting every ancestor folder) instead of
+    testing every document against every folder.
+    """
+    counts: Counter = Counter()
+    for raw in paths:
+        try:
+            parts = Path(raw).relative_to(root).parts
+        except ValueError:
+            continue  # outside the vault (external sources, lecture folder)
+        for depth in range(1, len(parts)):
+            counts[os.path.normcase("/".join(parts[:depth]))] += 1
+    return counts
 
 
 @router.get("/scopes")
@@ -36,26 +49,24 @@ def list_scopes(settings: Settings = Depends(get_settings)) -> dict:
     """Return every visible vault folder using its exact folder name."""
     root = Path(settings.vault.root).expanduser().resolve()
     with session_scope(settings) as session:
-        documents = list(session.scalars(select(Document)).all())
+        document_paths = list(session.scalars(select(Document.path)).all())
 
     if not root.is_dir():
         return {"scopes": []}
 
+    # Visible folders only (hidden/denied pruned, StudyCopilot output skipped),
+    # from the in-memory vault index when the app runs it, else one quick walk.
     folders = sorted(
         (
-            path
-            for path in root.rglob("*")
-            if path.is_dir()
-            and not path.name.startswith(".")
-            and not is_denied(path, settings)
-            and "StudyCopilot" not in path.relative_to(root).parts
+            (rel, root.joinpath(*rel.split("/")))
+            for rel in visible_folders(settings, frozenset({"StudyCopilot"}))
         ),
-        key=lambda path: str(path.relative_to(root)).lower(),
+        key=lambda item: item[0].lower(),
     )
+    counts = _folder_document_counts(document_paths, root)
     scopes = []
-    for folder in folders:
+    for relative, folder in folders:
         course = _course_from_folder(folder, root)
-        relative = folder.relative_to(root).as_posix()
         scopes.append(
             {
                 "id": f"folder:{relative}",
@@ -63,7 +74,7 @@ def list_scopes(settings: Settings = Depends(get_settings)) -> dict:
                 "kind": "course" if course else "folder",
                 "course": course,
                 "path": str(folder),
-                "documents": _document_count(documents, folder),
+                "documents": counts[os.path.normcase(relative)],
             }
         )
     return {"scopes": scopes}

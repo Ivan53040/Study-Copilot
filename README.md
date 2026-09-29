@@ -187,7 +187,52 @@ npm run dev      # http://localhost:5173
 ```
 
 Run the backend (`python -m app.main`) and the frontend together; open
-http://localhost:5173. The sidebar shows a live "Backend online" indicator.
+http://localhost:5173. The settings button at the bottom of the sidebar shows
+a live backend status dot and the active chat model.
+
+**Layout.** The interface follows a calm, chat-first layout:
+
+- **Home is a new chat**: a greeting, one centred composer, and quick actions
+  (explain a concept, quiz me, revision note, plan my day). The composer's
+  **book** chip scopes answers to a course, folder or study set; the **+**
+  button picks the context mode (*Auto* retrieval, *Selected* sources only, or
+  *Both*) and individual documents as snippets or full text.
+- **Answers** render in a reading serif with numbered citation chips; hover a
+  chip to highlight its source card, click to open the note (or the exact PDF
+  / slide page).
+- **Sidebar**: New chat (Ctrl/⌘+Shift+O), Search (Ctrl/⌘+K opens a palette
+  over notes, chats and pages), the note workspace, collapsible *Study tools*,
+  and **Recents**, your saved conversations with rename and delete. Collapse it
+  to an icon rail; under 900 px it becomes a drawer.
+- On every other page a **chat side panel** (speech-bubble button, top right)
+  keeps the conversation next to your notes; *Open in full view* moves it to
+  the main chat.
+- **Appearance** (Settings): Light, Dark or Match system, a serif or sans
+  reading font, text size, and the name used in the greeting. The serif is
+  Source Serif 4 (SIL Open Font License, bundled in `frontend/src/fonts/`).
+
+### One-click launcher (Windows)
+
+Double-click **`Study Copilot.cmd`** in the project folder. The first run also
+puts a **Study Copilot** shortcut (with the app icon) on your desktop; use that
+from then on.
+
+- It starts the backend on `127.0.0.1:8767`, which in this mode also serves the
+  built interface (`frontend/dist-web`), so no dev server or console windows
+  are needed.
+- It opens the app in its own window (Microsoft Edge or Chrome app mode, with a
+  separate profile in `data/app-window`).
+- Closing that window stops the backend and runs one vault sync, like the
+  packaged desktop app.
+- When the frontend source is newer than the last build it rebuilds the
+  interface first (`npm run build:web`, needs Node.js).
+- Logs: `data/launcher.log`, `data/launcher-backend.log`,
+  `data/launcher-build.log`.
+
+The sync scripts treat any Study Copilot backend on ports 8765 (desktop app),
+8766 (`scripts\restart_dev.cmd`) or 8767 (launcher) as "app open" and wait.
+They check that the port really answers as Study Copilot, so another program
+on one of those ports no longer blocks syncing.
 
 ### Desktop app (Tauri)
 
@@ -235,7 +280,12 @@ Endpoints live so far:
   `course`/`week`/`source_type`/`max_trust_level`
 - `POST /chat` — grounded Q&A; `{message, course?, conversation_id?}` → answer
   with `[S#]` citations, validated source list, and warnings
+- `GET  /conversations` — recent conversations (title, course, last activity)
+  for the sidebar; `?limit=` (1–200, default 50)
 - `GET  /conversations/{id}` — replay a conversation
+- `PATCH /conversations/{id}` — rename (`{title}`; blank reverts to the
+  automatic title from the first question)
+- `DELETE /conversations/{id}` — delete a conversation and its messages
 - `POST /notes/generate` — generate a revision note; `{course, week?, topic?,
   write?}` → preview by default, `write:true` saves into `StudyCopilot/`
 - `POST /quizzes/generate` — generate a quiz (MCQ + short) from sources
@@ -306,7 +356,7 @@ The app doubles as an Obsidian-style workspace over the **whole vault**:
 - **Graph** — an interactive force-directed graph of notes linked by wikilinks;
   click a node to open it.
 
-UI: a top bar toggles the left sidebar, the note **outline (TOC)**, and a
+UI: the page header toggles the **file tree**, the note **outline (TOC)**, and a
 slide-in **Chat panel** on the right. The file tree has an Obsidian-style
 toolbar — **new note**, **new folder**, **sort**, **reveal current note**, and
 **expand/collapse all**.
@@ -319,6 +369,16 @@ to PDF, and delete (reversible — moved to `StudyCopilot/_backups/_deleted/`).
 
 Backed by `app/vault/` (filesystem-direct, independent of the RAG index) and the
 `/vault/*` endpoints.
+
+**Speed.** The running app keeps an in-memory index of the vault
+([`app/vault/index.py`](app/vault/index.py)): one scan at startup, then a file
+watcher (`watchfiles`, already installed with `uvicorn[standard]`) applies
+changes as they happen, with a safety rescan every two minutes. Tree, note,
+search and scope requests are served from memory instead of walking the disk,
+and the app's own writes update the index immediately. Opening a note loads
+its text first (`/vault/note?links=false`) and its links and backlinks in
+parallel (`/vault/note-links`), and the notes workspace stays mounted when you
+switch pages.
 
 ### Grounded chat (Phase 3)
 

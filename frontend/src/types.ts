@@ -41,10 +41,51 @@ export interface ChatResponse {
   conversation_id: number;
   answer: string;
   citations: Citation[];
-  sources: Array<Record<string, unknown> & { title: string; marker: string }>;
+  sources: ChatSource[];
   warnings: string[];
   used_vector: boolean;
   model: string;
+}
+
+export interface ChatSource {
+  marker: string;
+  title: string;
+  heading: string | null;
+  path: string;
+  page_number: number | null;
+  document_id: number;
+  course: string | null;
+  week: number | null;
+  trust_level: number;
+  source_type: string | null;
+}
+
+export interface ConversationSummary {
+  id: number;
+  title: string;
+  custom_title: boolean;
+  course: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+  preview: string;
+}
+
+export interface ConversationDetail {
+  id: number;
+  course: string | null;
+  title: string;
+  created_at: string | null;
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    extra: {
+      citations?: Citation[];
+      sources?: ChatSource[];
+      warnings?: string[];
+    } | null;
+    created_at: string | null;
+  }>;
 }
 
 export interface NotePreview {
@@ -275,6 +316,8 @@ export interface VaultNote {
   headings: NoteHeading[];
   links: { name: string; path: string | null }[];
   backlinks: { path: string; title: string }[];
+  /** False while links/backlinks are still being fetched (text shown first). */
+  links_loaded?: boolean;
   editable: boolean;
 }
 

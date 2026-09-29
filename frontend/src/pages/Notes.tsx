@@ -640,13 +640,49 @@ export function NotesPage({
     setInlineTranslation(null);
     setError(null);
     setExpanded((prev) => new Set([...prev, ...ancestorsOf(active)]));
+
+    // Text first, links second. Both requests start together; if the links
+    // arrive within a moment they render with the text in one pass, otherwise
+    // the text shows straight away and the links are merged in when ready.
+    let alive = true;
+    const LINK_GRACE_MS = 120;
+    const linksRequest = api.vaultNoteLinks(active);
     api
-      .vaultNote(active)
+      .vaultNote(active, { links: false })
       .then((n) => {
-        setNote(n);
-        setDraft(n.content);
+        if (!alive) return;
+        let shown = false;
+        const show = (links?: Pick<VaultNote, "links" | "backlinks">) => {
+          shown = true;
+          setNote({ ...n, ...(links ?? {}), links_loaded: Boolean(links) });
+          setDraft(n.content);
+        };
+        const timer = window.setTimeout(() => alive && !shown && show(), LINK_GRACE_MS);
+        linksRequest
+          .then((l) => {
+            if (!alive) return;
+            if (!shown) {
+              window.clearTimeout(timer);
+              show(l);
+            } else {
+              setNote((current) =>
+                current && current.path === n.path
+                  ? { ...current, links: l.links, backlinks: l.backlinks, links_loaded: true }
+                  : current,
+              );
+            }
+          })
+          .catch(() => {
+            if (alive && !shown) {
+              window.clearTimeout(timer);
+              show();
+            }
+          });
       })
-      .catch((e) => setError((e as Error).message));
+      .catch((e) => alive && setError((e as Error).message));
+    return () => {
+      alive = false;
+    };
   }, [active]);
 
   useEffect(() => {
@@ -892,7 +928,7 @@ export function NotesPage({
       let target: string | null = null;
       for (const candidate of candidates) {
         try {
-          await api.vaultNote(candidate);
+          await api.vaultNote(candidate, { links: false }); // existence check only
           target = candidate;
           break;
         } catch {

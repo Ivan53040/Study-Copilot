@@ -53,7 +53,16 @@ def _matches_any(path: Path, patterns: list[str], roots: list[Path]) -> bool:
 
 
 def is_denied(path: str | Path, settings: Settings) -> bool:
-    p = _resolve(path)
+    return is_denied_resolved(_resolve(path), settings)
+
+
+def is_denied_resolved(p: Path, settings: Settings) -> bool:
+    """``is_denied`` for a path that is already canonical (resolved).
+
+    Walkers that start from the resolved vault root and only step into real
+    (non-symlink, non-junction) entries produce canonical paths already; they
+    use this to skip ``Path.resolve()``, which on Windows opens every file.
+    """
     posix_full = p.as_posix()
     for pattern in settings.vault.denied_paths:
         if fnmatch.fnmatch(posix_full, pattern):

@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat as stat_module
 import subprocess
 import threading
 import json
@@ -24,12 +25,14 @@ import frontmatter
 from app.config.settings import Settings, get_settings
 from app.logging_config import get_logger
 from app.sync.gate import vault_write_gate
+from app.vault import index as vault_index
 from app.security.paths import (
     PathSecurityError,
     assert_readable,
     assert_workspace_readable,
     assert_workspace_writable,
     is_denied,
+    is_denied_resolved,
     is_in_vault,
 )
 
@@ -63,47 +66,159 @@ def _link_cache_path(root: str) -> Path:
     return _DATA_DIR / f"vault_note_links_{digest}.json"
 
 
-def _gated(fn):
-    """Serialise vault mutations against in-flight sync runs (app.sync.gate)."""
+def _gated(fn=None, *, notify: bool = True):
+    """Serialise vault mutations against in-flight sync runs (app.sync.gate).
 
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        with vault_write_gate():
-            return fn(*args, **kwargs)
+    Afterwards the in-memory vault index (if running) is told the vault's
+    structure changed, so the very next tree/note read already sees the
+    result. ``notify=False`` is for functions that notify more precisely.
+    """
 
-    return wrapper
+    def decorate(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with vault_write_gate():
+                result = func(*args, **kwargs)
+            if notify:
+                vault_index.notify_any_changed()
+            return result
+
+        return wrapper
+
+    return decorate(fn) if fn is not None else decorate
 
 
 def _vault_root(settings: Settings) -> Path:
     return Path(settings.vault.root).expanduser().resolve()
 
 
-def _visible_dirs(dirpath: str, dirnames: list[str], settings: Settings) -> list[str]:
-    """Subdirectories worth descending into: skip hidden and denied folders."""
-    return [
-        d
-        for d in dirnames
-        if not d.startswith(".") and not is_denied(Path(dirpath) / d, settings)
-    ]
+_REPARSE_POINT = getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
 
 
-def _is_note_file(p: Path, settings: Settings) -> bool:
-    """A visible, allowed file with a recognised note extension."""
-    return (
-        not p.name.startswith(".")
-        and p.suffix.lower() in NOTE_EXTS
-        and not is_denied(p, settings)
-    )
+def _is_plain(entry: os.DirEntry) -> bool:
+    """A real file or folder: not a symlink, junction or other reparse point."""
+    if entry.is_symlink():
+        return False
+    if _REPARSE_POINT:  # Windows: junctions are not reported as symlinks
+        try:
+            attributes = entry.stat(follow_symlinks=False).st_file_attributes
+        except (OSError, AttributeError):
+            return False
+        return not attributes & _REPARSE_POINT
+    return True
+
+
+def walk_vault(settings: Settings, *, files: bool = True, skip_dirs: frozenset[str] = frozenset()):
+    """Yield the vault's visible folders and note files, fast.
+
+    Yields ``("dir", rel, abs_path, None)`` for every visible folder (the root
+    is ``""``) and, when ``files`` is true, ``("file", rel, abs_path, entry)``
+    for every note file, in the same top-down order as ``os.walk``.
+
+    Visibility matches the previous ``os.walk`` + ``is_denied`` rules exactly:
+    hidden and denied entries are skipped and symlinked folders are never
+    entered. It is much faster on Windows because
+      * entries under the resolved root are already canonical, so the deny
+        rules run on the path string (``is_denied_resolved``) instead of
+        ``Path.resolve()`` opening every file; symlinks, junctions and
+        anything inside a junction still get the full resolve-based check;
+      * ``entry.stat()`` for size/mtime comes from the directory listing
+        itself on Windows, with no extra system call per file.
+    ``skip_dirs`` prunes folders with those exact names (and their subtrees).
+    """
+    root = _vault_root(settings)
+    stack: list[tuple[str, str, bool]] = [(str(root), "", True)]
+    while stack:
+        dirpath, rel_dir, canonical = stack.pop()
+        yield "dir", rel_dir, dirpath, None
+        try:
+            with os.scandir(dirpath) as iterator:
+                entries = list(iterator)
+        except OSError:
+            continue
+        subdirs: list[tuple[str, str, bool]] = []
+        for entry in entries:
+            name = entry.name
+            if name.startswith("."):
+                continue
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                is_dir = False
+            if not is_dir and (not files or Path(name).suffix.lower() not in NOTE_EXTS):
+                continue
+            if is_dir and (name in skip_dirs or entry.is_symlink()):
+                continue  # os.walk never descends into symlinked folders
+            plain = canonical and _is_plain(entry)
+            denied = (
+                is_denied_resolved(Path(entry.path), settings)
+                if plain
+                else is_denied(entry.path, settings)
+            )
+            if denied:
+                continue
+            rel = f"{rel_dir}/{name}" if rel_dir else name
+            if is_dir:
+                subdirs.append((entry.path, rel, plain))
+            else:
+                yield "file", rel, entry.path, entry
+        stack.extend(reversed(subdirs))
+
+
+def _scan_files(settings: Settings) -> list[tuple[str, str, int, int]]:
+    """``(rel, abs_path, mtime_ns, size)`` for every visible note.
+
+    Served from the in-memory index when the app runs it (no disk walk at all);
+    otherwise one fast walk.
+    """
+    index = vault_index.get(settings)
+    if index is not None:
+        return [
+            (rel, path, mtime_ns, size)
+            for rel, (path, mtime_ns, size) in index.snapshot().files.items()
+        ]
+    out: list[tuple[str, str, int, int]] = []
+    for kind, rel, path, entry in walk_vault(settings):
+        if kind != "file":
+            continue
+        try:
+            stat = entry.stat()  # served from the directory listing on Windows
+        except OSError:
+            continue
+        out.append((rel, path, stat.st_mtime_ns, stat.st_size))
+    return out
 
 
 def _iter_notes(settings: Settings):
-    root = _vault_root(settings)
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = _visible_dirs(dirpath, dirnames, settings)
-        for name in filenames:
-            p = Path(dirpath) / name
-            if _is_note_file(p, settings):
-                yield p, p.relative_to(root).as_posix()
+    index = vault_index.get(settings)
+    if index is not None:
+        for rel, (path, _mtime, _size) in index.snapshot().files.items():
+            yield Path(path), rel
+        return
+    for kind, rel, path, _entry in walk_vault(settings):
+        if kind == "file":
+            yield Path(path), rel
+
+
+def visible_folders(
+    settings: Settings, skip_dirs: frozenset[str] = frozenset()
+) -> list[str]:
+    """Vault-relative paths of every visible folder (the root excluded).
+
+    ``skip_dirs`` leaves out folders with those names and everything below them.
+    """
+    index = vault_index.get(settings)
+    if index is not None:
+        return [
+            rel
+            for rel in index.snapshot().dirs
+            if rel and not any(part in skip_dirs for part in rel.split("/"))
+        ]
+    return [
+        rel
+        for kind, rel, _path, _entry in walk_vault(settings, files=False, skip_dirs=skip_dirs)
+        if kind == "dir" and rel
+    ]
 
 
 def _slugify(text: str) -> str:
@@ -140,7 +255,9 @@ def extract_links(text: str) -> list[str]:
 def list_tree(settings: Settings | None = None) -> dict:
     """Nested folder/file tree of the vault (includes empty folders)."""
     settings = settings or get_settings()
-    root_path = _vault_root(settings)
+    index = vault_index.get(settings)
+    if index is not None:
+        return index.tree()
     root: dict = {"name": "", "path": "", "type": "folder", "children": {}}
 
     def ensure_folder(rel: str) -> dict:
@@ -162,19 +279,16 @@ def list_tree(settings: Settings | None = None) -> dict:
             node = child
         return node
 
-    for dirpath, dirnames, filenames in os.walk(root_path):
-        dirnames[:] = _visible_dirs(dirpath, dirnames, settings)
-        rel_dir = Path(dirpath).relative_to(root_path).as_posix()
-        rel_dir = "" if rel_dir == "." else rel_dir
-        folder = ensure_folder(rel_dir)
-        for name in filenames:
-            p = Path(dirpath) / name
-            if _is_note_file(p, settings):
-                folder["children"][name] = {
-                    "name": name,
-                    "path": p.relative_to(root_path).as_posix(),
-                    "type": "file",
-                }
+    for kind, rel, _path, _entry in walk_vault(settings):
+        if kind == "dir":
+            ensure_folder(rel)
+            continue
+        parent, _, name = rel.rpartition("/")
+        ensure_folder(parent)["children"][name] = {
+            "name": name,
+            "path": rel,
+            "type": "file",
+        }
 
     def to_list(node: dict) -> dict:
         children = node["children"].values()
@@ -239,13 +353,10 @@ def _note_entries(
     link cache already covers the file.
     """
     root = str(_vault_root(settings))
-    scanned: list[tuple[str, Path, int, int]] = []
-    for path, rel in _iter_notes(settings):
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        scanned.append((rel, path, stat.st_mtime_ns, stat.st_size))
+    scanned: list[tuple[str, Path, int, int]] = [
+        (rel, Path(path), mtime_ns, size)
+        for rel, path, mtime_ns, size in _scan_files(settings)
+    ]
 
     with _NOTES_LOCK:
         if _NOTES_CACHE["root"] != root:
@@ -319,6 +430,15 @@ def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]
     repeat opens do a stat-only walk instead of reading every note's content.
     """
     root = str(_vault_root(settings))
+    # With the in-memory index, one snapshot version pins every note's
+    # (mtime, size), so the graph can be reused without touching the notes.
+    live_index = vault_index.get(settings)
+    version = (id(live_index), live_index.snapshot().generation) if live_index else None
+    if version is not None:
+        with _GRAPH_LOCK:
+            if _GRAPH_CACHE["root"] == root and _GRAPH_CACHE.get("version") == version:
+                return _GRAPH_CACHE["index"], _GRAPH_CACHE["outlinks"]
+
     entries = _note_entries(settings, need_text=False)
     signature = tuple(
         sorted((rel, item[0], item[1]) for rel, item in entries.items())
@@ -326,6 +446,7 @@ def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]
 
     with _GRAPH_LOCK:
         if _GRAPH_CACHE["root"] == root and _GRAPH_CACHE["sig"] == signature:
+            _GRAPH_CACHE["version"] = version
             return _GRAPH_CACHE["index"], _GRAPH_CACHE["outlinks"]
 
     index: dict[str, str] = {}
@@ -335,29 +456,26 @@ def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]
         outlinks[rel] = item[3] or []
 
     with _GRAPH_LOCK:
-        _GRAPH_CACHE.update(root=root, sig=signature, index=index, outlinks=outlinks)
+        _GRAPH_CACHE.update(
+            root=root, sig=signature, version=version, index=index, outlinks=outlinks
+        )
     return index, outlinks
 
 
-def read_note(relpath: str, settings: Settings | None = None) -> dict:
-    settings = settings or get_settings()
+def _read_note_file(relpath: str, settings: Settings) -> tuple[Path, str]:
     abs_path = assert_workspace_readable(_vault_root(settings) / relpath, settings)
     if not abs_path.exists():
         raise FileNotFoundError(f"Note not found: {relpath}")
+    return abs_path, abs_path.read_text(encoding="utf-8", errors="replace")
 
-    raw = abs_path.read_text(encoding="utf-8", errors="replace")
-    try:
-        post = frontmatter.loads(raw)
-        meta, body = dict(post.metadata), post.content
-    except Exception:
-        meta, body = {}, raw
 
+def _resolve_links(relpath: str, raw: str, settings: Settings) -> tuple[list[dict], list[dict]]:
+    """``(outgoing links resolved to paths, backlinks)`` for one note."""
     index, outlinks = _link_graph(settings)
     # Resolve this note's outgoing links from its freshly-read content.
     resolved = [
         {"name": n, "path": index.get(n.lower())} for n in extract_links(raw)
     ]
-
     # Backlinks: any other note whose body links to this note's name.
     this_stem = Path(relpath).stem.lower()
     backlinks: list[dict] = [
@@ -365,7 +483,27 @@ def read_note(relpath: str, settings: Settings | None = None) -> dict:
         for rel, targets in outlinks.items()
         if rel != relpath and any(t.lower() == this_stem for t in targets)
     ]
+    return resolved, backlinks
 
+
+def read_note(
+    relpath: str, settings: Settings | None = None, *, with_links: bool = True
+) -> dict:
+    """A note's text, frontmatter and headings, plus its links.
+
+    ``with_links=False`` skips the vault-wide link lookup so the text can be
+    shown at once; ``links``/``backlinks`` are then empty and ``note_links``
+    fills them in.
+    """
+    settings = settings or get_settings()
+    abs_path, raw = _read_note_file(relpath, settings)
+    try:
+        post = frontmatter.loads(raw)
+        meta, body = dict(post.metadata), post.content
+    except Exception:
+        meta, body = {}, raw
+
+    resolved, backlinks = _resolve_links(relpath, raw, settings) if with_links else ([], [])
     return {
         "path": relpath,
         "name": Path(relpath).stem,
@@ -374,9 +512,18 @@ def read_note(relpath: str, settings: Settings | None = None) -> dict:
         "headings": extract_headings(body),
         "links": resolved,
         "backlinks": backlinks,
+        "links_loaded": with_links,
         "editable": abs_path.suffix.lower()
         in set(settings.workspace.editable_extensions),
     }
+
+
+def note_links(relpath: str, settings: Settings | None = None) -> dict:
+    """Only a note's resolved outgoing links and backlinks."""
+    settings = settings or get_settings()
+    _abs_path, raw = _read_note_file(relpath, settings)
+    resolved, backlinks = _resolve_links(relpath, raw, settings)
+    return {"path": relpath, "links": resolved, "backlinks": backlinks}
 
 
 def _prune_backups(backup_dir: Path, note_name: str, settings: Settings) -> None:
@@ -396,13 +543,14 @@ def _prune_backups(backup_dir: Path, note_name: str, settings: Settings) -> None
             logger.warning("Could not prune old backup %s", stale)
 
 
-@_gated
+@_gated(notify=False)
 def write_note(
     relpath: str, content: str, settings: Settings | None = None
 ) -> dict:
     settings = settings or get_settings()
     root = _vault_root(settings)
     abs_path = assert_workspace_writable(root / relpath, settings)
+    existed = abs_path.exists()
 
     backup_path = None
     if settings.workspace.backup_on_edit and abs_path.exists():
@@ -417,6 +565,10 @@ def write_note(
 
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_text(content, encoding="utf-8")
+    # An edit only changes this note's content; a new note changes the tree.
+    vault_index.notify_changed(
+        settings, Path(relpath).as_posix(), content_only=existed
+    )
     logger.info("Edited note %s (backup=%s)", relpath, bool(backup_path))
     return {"path": relpath, "written": True, "backup": backup_path}
 
