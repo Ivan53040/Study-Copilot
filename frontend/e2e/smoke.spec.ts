@@ -90,6 +90,31 @@ test("stop keeps what was written so far", async ({ page }) => {
   await expect(lastAnswer(page)).toContainText("Stopped before the answer was finished.");
 });
 
+test("stop before the answer starts: the question goes back in the box", async ({ page }) => {
+  await page.goto("/");
+  await ask(page, "What is validity? (slow search)");
+  await expect(page.locator(".turn-user")).toHaveText("What is validity? (slow search)");
+  await page.getByRole("button", { name: "Stop answering" }).click();
+  await expect(page.locator(".turn-user")).toHaveCount(0);
+  await expect(page.locator(".composer textarea")).toHaveValue("What is validity? (slow search)");
+  // Nothing was saved: no chat appears in Recents after a reload.
+  await page.waitForTimeout(2000);
+  await page.reload();
+  await expect(page.locator(".sb-recents")).not.toContainText("slow search");
+});
+
+test("reasoning that only ends with </think> moves out of the answer", async ({ page }) => {
+  await page.goto("/");
+  await ask(page, "What is calibrated trust? (think in the prompt)");
+  await waitForAnswer(page);
+  const answer = lastAnswer(page);
+  await expect(answer.locator(".md")).toContainText("Calibrated trust means");
+  await expect(answer.locator(".md")).not.toContainText("Working it out");
+  await expect(answer.locator(".think-toggle")).toContainText("Thought for");
+  await answer.locator(".think-toggle").click();
+  await expect(answer.locator(".think-block")).toContainText("Working it out.");
+});
+
 test("the chat panel next to a note answers from that note", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Notes", exact: true }).click();
@@ -103,6 +128,12 @@ test("the chat panel next to a note answers from that note", async ({ page }) =>
   const dock = page.locator(".chat-dock");
   await expect(dock.locator(".note-chip")).toContainText("Trust Calibration");
   await ask(page, "What are the risks?", dock);
+  // Going to the Chat page and back while it answers doesn't lose the answer.
+  await expect(dock.locator(".turn.streaming")).toBeVisible();
+  await page.locator(".sb-new").click();
+  await expect(dock).toBeHidden();
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await expect(dock).toBeVisible();
   await waitForAnswer(dock);
   await expect(dock.locator(".turn-note-chip")).toContainText("Trust Calibration");
   const titles = await dock.locator(".source-card .source-title").allInnerTexts();

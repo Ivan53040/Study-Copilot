@@ -21,6 +21,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -158,11 +159,20 @@ def _mock_llm():
         if not body.get("stream"):
             return completion(text)
 
+        # A model whose chat template opens <think> in the prompt: its
+        # reasoning arrives as plain text ending in </think>.
+        think_in_prompt = "(think in the prompt)" in last
+
         async def events():
-            for piece in ["Checking ", "the sources."]:
-                await asyncio.sleep(0.15)
-                delta = {"choices": [{"delta": {"reasoning_content": piece}}]}
-                yield "data: " + json.dumps(delta) + "\n\n"
+            if think_in_prompt:
+                for piece in ["Working it ", "out.</th", "ink>\n\n"]:
+                    await asyncio.sleep(0.15)
+                    yield "data: " + json.dumps({"choices": [{"delta": {"content": piece}}]}) + "\n\n"
+            else:
+                for piece in ["Checking ", "the sources."]:
+                    await asyncio.sleep(0.15)
+                    delta = {"choices": [{"delta": {"reasoning_content": piece}}]}
+                    yield "data: " + json.dumps(delta) + "\n\n"
             for token in re.findall(r"\S+\s*", text):
                 await asyncio.sleep(0.12)
                 yield "data: " + json.dumps({"choices": [{"delta": {"content": token}}]}) + "\n\n"
@@ -198,6 +208,19 @@ def main() -> None:
 
     # Keep the note-link cache in the temp folder, not the repo's data/.
     vault_service._link_cache_path = lambda root: tmp / "note_links.json"
+
+    # "(slow search)" in a question makes retrieval take a moment, so a test
+    # can press Stop before the answer starts.
+    from app.agent import study_agent
+
+    real_search = study_agent.search
+
+    def search(question, *args, **kwargs):
+        if "(slow search)" in question:
+            time.sleep(1.5)
+        return real_search(question, *args, **kwargs)
+
+    study_agent.search = search
     settings = get_settings()
     init_db(settings)
     ingest(settings)

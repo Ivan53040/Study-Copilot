@@ -1023,16 +1023,23 @@ export function ChatPage({
     const userId = nextId();
     const answerId = nextId();
     const notePath = noteScope?.path ?? null;
-    setTurns((current) => [
-      ...(replace ? current.slice(0, replace.index) : current),
-      { id: userId, role: "user", content: message, notePath },
-      { id: answerId, role: "assistant", content: "", streaming: true, phase: "search", notePath },
-    ]);
+    // The thread as it was, to put back if this is stopped before it starts.
+    const before: { turns: Turn[] | null } = { turns: null };
+    setTurns((current) => {
+      before.turns = current;
+      return [
+        ...(replace ? current.slice(0, replace.index) : current),
+        { id: userId, role: "user", content: message, notePath },
+        { id: answerId, role: "assistant", content: "", streaming: true, phase: "search", notePath },
+      ];
+    });
     stickToBottom.current = true;
     setLoading(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const askedAt = Date.now();
+    let started = false;
     const pending: Pending = { content: "", thinking: "" };
     let flushTimer: number | null = null;
     const flush = () => {
@@ -1075,6 +1082,7 @@ export function ChatPage({
 
     const onEvent = (event: ChatStreamEvent) => {
       if (event.type === "start") {
+        started = true;
         patchTurn(userId, () => ({ messageId: event.user_message_id }));
         patchTurn(answerId, () => ({ sources: event.sources, phase: "read" }));
         if (event.conversation_id !== convIdRef.current) {
@@ -1090,6 +1098,18 @@ export function ChatPage({
       } else if (event.type === "delta") {
         pending.content += event.text;
         schedule();
+      } else if (event.type === "rethink") {
+        // The model's reasoning began in its prompt: what looked like the
+        // answer so far was thinking.
+        if (flushTimer != null) window.clearTimeout(flushTimer);
+        flush();
+        patchTurn(answerId, (turn) => ({
+          thinking: (turn.thinking ?? "") + turn.content,
+          thinkStartedAt: turn.thinkStartedAt ?? askedAt,
+          thinkMs: undefined,
+          content: "",
+          phase: "think",
+        }));
       } else if (event.type === "done") {
         if (flushTimer != null) window.clearTimeout(flushTimer);
         flush();
@@ -1113,7 +1133,18 @@ export function ChatPage({
     } catch (e) {
       if (flushTimer != null) window.clearTimeout(flushTimer);
       flush();
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted && !started) {
+        // Stopped before the answer started: the backend undoes the question
+        // (an edit or regenerate gets back what it replaced), so the thread
+        // goes back to how it was and a new or edited question to the box.
+        const previous = before.turns;
+        const regenerated =
+          replace != null && previous?.[replace.index]?.content === message;
+        setTurns((current) =>
+          previous ?? current.filter((turn) => turn.id !== userId && turn.id !== answerId),
+        );
+        if (!regenerated) setInput((current) => (current.trim() ? current : message));
+      } else if (controller.signal.aborted) {
         // Stopped: keep what was written (the backend saved it too).
         patchTurn(answerId, (turn) => ({
           streaming: false,

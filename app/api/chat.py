@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from datetime import datetime, timezone
@@ -107,15 +108,21 @@ def _line(event: dict) -> bytes:
 async def _ndjson(events: Iterator[dict]) -> AsyncIterator[bytes]:
     """Relay a blocking event generator as NDJSON without blocking the loop.
 
-    When the client disconnects (or presses Stop) the response is cancelled;
-    closing the generator then stops the model request and saves the partial
-    answer.
+    When the client disconnects (or presses Stop) the response is cancelled at
+    once, even while the model is still thinking: the stream's ``stop()`` then
+    saves the partial answer straight away, and closing it ends the model
+    request.
     """
+    start_sent = False
+    finished = False
     try:
         while True:
             try:
-                event = await anyio.to_thread.run_sync(next, events, _END)
+                event = await anyio.to_thread.run_sync(
+                    next, events, _END, abandon_on_cancel=True
+                )
             except Exception as exc:  # surface failures to the reader
+                finished = True
                 error = _request_error(exc)
                 if error is None:
                     logger.exception("Chat stream failed")
@@ -123,10 +130,19 @@ async def _ndjson(events: Iterator[dict]) -> AsyncIterator[bytes]:
                 yield _line({"type": "error", "message": message})
                 return
             if event is _END:
+                finished = True
                 return
+            # Counted as seen once we try to send it: if the reader drops just
+            # then, keeping its question is safer than undoing one it saw.
+            start_sent = start_sent or event.get("type") == "start"
             yield _line(event)
     finally:
         with anyio.CancelScope(shield=True):
+            stop = getattr(events, "stop", None)
+            if not finished and stop is not None:
+                await anyio.to_thread.run_sync(
+                    functools.partial(stop, start_delivered=start_sent)
+                )
             await anyio.to_thread.run_sync(events.close)
 
 

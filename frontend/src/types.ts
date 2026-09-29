@@ -75,6 +75,8 @@ export type ChatStreamEvent =
     }
   | { type: "thinking"; text: string }
   | { type: "delta"; text: string }
+  /** The answer text so far was really the model's reasoning. */
+  | { type: "rethink" }
   | ({ type: "done" } & ChatResponse)
   | { type: "error"; message: string };
 

@@ -111,11 +111,11 @@ def test_openai_stream_parses_sse_and_reasoning(monkeypatch):
     ]
     lines = [f"data: {json.dumps(e)}" for e in events] + ["", ": keep-alive", "data: [DONE]"]
 
-    def fake_stream(method, url, *, json, headers, timeout):
+    def fake_stream(url, *, json, headers, timeout, cancel=None):
         sent.update(json=json, url=url)
         return _FakeStream(lines)
 
-    monkeypatch.setattr(chat_models.httpx, "stream", fake_stream)
+    monkeypatch.setattr(chat_models, "_open_stream", fake_stream)
     adapter = LMStudioChatAdapter("http://x/v1", "m")
     chunks = list(adapter.stream([chat_models.ChatMessage("user", "q")]))
     assert sent["json"]["stream"] is True
@@ -126,8 +126,8 @@ def test_openai_stream_parses_sse_and_reasoning(monkeypatch):
 def test_openai_stream_accepts_non_streaming_server(monkeypatch):
     body = {"choices": [{"message": {"content": "Plain answer"}}]}
     monkeypatch.setattr(
-        chat_models.httpx,
-        "stream",
+        chat_models,
+        "_open_stream",
         lambda *a, **k: _FakeStream([json.dumps(body)], content_type="application/json"),
     )
     chunks = list(LMStudioChatAdapter("http://x/v1", "m").stream([]))
@@ -138,7 +138,7 @@ def test_openai_stream_http_error_is_chat_error(monkeypatch):
     def boom(*a, **k):
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(chat_models.httpx, "stream", boom)
+    monkeypatch.setattr(chat_models, "_open_stream", boom)
     with pytest.raises(chat_models.ChatError):
         list(LMStudioChatAdapter("http://x/v1", "m").stream([]))
 
@@ -314,3 +314,225 @@ def test_http_errors(client):
     assert res.status_code == 404
     res = client.post("/chat", json={"message": "x", "conversation_id": 1, "replace_from_id": 999})
     assert res.status_code == 400
+
+
+# ---- Stop while the model is busy -----------------------------------------
+
+
+class _Gated:
+    """A model that sends nothing until ``release`` is set (a slow prompt)."""
+
+    model_name = "gated"
+
+    def __init__(self, pieces=("Late words [S1].",)):
+        import threading
+
+        self.release = threading.Event()
+        self.pieces = pieces
+        self.closed = False
+
+    def stream(self, messages, *, temperature=0.1):
+        try:
+            self.release.wait(timeout=10)
+            for piece in self.pieces:
+                yield StreamChunk("text", piece)
+        finally:
+            self.closed = True
+
+
+def _in_thread(fn):
+    import threading
+
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the test
+            box["error"] = exc
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, box
+
+
+def test_stop_saves_at_once_and_is_not_overtaken_by_regenerate(indexed):
+    model = _Gated()
+    events = stream_answer("What is reliability?", settings=indexed, adapter=model)
+    start = next(events)
+    # The reader's next() is stuck waiting for the model's first piece.
+    waiting, _ = _in_thread(lambda: next(events, None))
+    events.stop()  # Stop pressed: saved now, not when the model speaks
+    rows = _messages(indexed, start["conversation_id"])
+    assert [r[1] for r in rows] == ["user", "assistant"]
+    assert any("Stopped" in w for w in rows[1][3]["warnings"])
+
+    # Regenerate right away replaces the question and the stopped answer.
+    again = answer(
+        "What is reliability?", settings=indexed, adapter=EchoChatAdapter(),
+        conversation_id=start["conversation_id"], replace_from_id=start["user_message_id"],
+    )
+    # Now the slow model finally sends its words: nothing more is saved.
+    model.release.set()
+    waiting.join(timeout=10)
+    events.close()
+    assert model.closed
+    rows = _messages(indexed, start["conversation_id"])
+    assert [r[0] for r in rows] == [again.user_message_id, again.message_id]
+    assert "Late words" not in rows[1][2]
+
+
+def test_stop_before_start_undoes_a_new_question(indexed):
+    import threading
+
+    from app.agent import study_agent
+
+    entered, go_on = threading.Event(), threading.Event()
+    real_prepare = study_agent.prepare_answer
+
+    def slow_prepare(*args, **kwargs):
+        prepared = real_prepare(*args, **kwargs)
+        entered.set()
+        go_on.wait(timeout=10)
+        return prepared
+
+    study_agent.prepare_answer = slow_prepare
+    try:
+        events = stream_answer("What is reliability?", settings=indexed, adapter=EchoChatAdapter())
+        waiting, box = _in_thread(lambda: next(events, None))
+        assert entered.wait(timeout=10)
+        events.stop(start_delivered=False)  # Stop while still retrieving
+        go_on.set()
+        waiting.join(timeout=10)
+        events.close()
+    finally:
+        study_agent.prepare_answer = real_prepare
+    assert box.get("value") is None  # the reader never gets ``start``
+    with session_scope(indexed) as session:
+        assert session.query(Message).count() == 0
+        from app.database.models import Conversation
+
+        assert session.query(Conversation).count() == 0
+
+
+def test_stop_before_start_in_an_edit_puts_the_old_turn_back(indexed):
+    first = answer("reliability", settings=indexed, adapter=EchoChatAdapter())
+    before = _messages(indexed, first.conversation_id)
+    events = stream_answer(
+        "What is validity?", settings=indexed, adapter=_Gated(),
+        conversation_id=first.conversation_id, replace_from_id=first.user_message_id,
+    )
+    next(events)  # (produced, but the reader never received it)
+    events.stop(start_delivered=False)
+    events.close()
+    # As if the edit was never sent: the original question and answer are back.
+    assert _messages(indexed, first.conversation_id) == before
+
+
+def test_a_reply_whose_question_was_replaced_is_not_saved(indexed):
+    model = _Gated()
+    events = stream_answer("What is reliability?", settings=indexed, adapter=model)
+    start = next(events)
+    # Another window edits the question while this answer is being written.
+    answer(
+        "Define reliability", settings=indexed, adapter=EchoChatAdapter(),
+        conversation_id=start["conversation_id"], replace_from_id=start["user_message_id"],
+    )
+    model.release.set()
+    done = list(events)[-1]
+    assert done["type"] == "done" and done["message_id"] is None
+    rows = _messages(indexed, start["conversation_id"])
+    assert [r[2] for r in rows][0] == "Define reliability"
+    assert "Late words" not in " ".join(r[2] for r in rows)
+
+
+async def test_http_relay_stops_the_stream_when_the_reader_leaves(indexed):
+    import anyio
+
+    from app.api.chat import _ndjson
+
+    model = _Gated()
+    events = stream_answer("What is reliability?", settings=indexed, adapter=model)
+    relay = _ndjson(events)
+    first = json.loads(await relay.__anext__())
+    assert first["type"] == "start"
+    with anyio.move_on_after(0.3):  # the model is silent; the reader leaves
+        await relay.__anext__()
+    await relay.aclose()  # runs the relay's cleanup: stop() then close()
+    rows = _messages(indexed, first["conversation_id"])
+    assert [r[1] for r in rows] == ["user", "assistant"]
+    assert any("Stopped" in w for w in rows[1][3]["warnings"])
+    model.release.set()
+
+
+# ---- reasoning opened in the prompt ----------------------------------------
+
+
+def test_closing_think_tag_alone_turns_earlier_text_into_thinking(indexed):
+    class OnlyCloses:
+        model_name = "closes"
+
+        def stream(self, messages, *, temperature=0.1):
+            yield from (
+                StreamChunk("text", t)
+                for t in ["The user asks about ", "reliability.</thi", "nk>\n\nReliability is consistency [S1]."]
+            )
+
+    chunks = list(stream_reply(OnlyCloses(), []))
+    kinds = [c.kind for c in chunks]
+    assert "rethink" in kinds
+    after = kinds.index("rethink")
+    # Everything passed on before the rethink was reasoning; after it, the answer.
+    assert "".join(c.text for c in chunks[:after]) == "The user asks about reliability."
+    assert "".join(c.text for c in chunks[after:] if c.kind == "text").strip() == "Reliability is consistency [S1]."
+
+    events = list(stream_answer("What is reliability?", settings=indexed, adapter=OnlyCloses()))
+    assert {"type": "rethink"} in events
+    done = events[-1]
+    assert done["answer"] == "Reliability is consistency [S1]."
+
+
+def test_stop_ends_the_model_request_while_it_reads_the_prompt(indexed):
+    """A local model reading a long prompt sends nothing for a while; Stop
+    must not wait for it (it would keep the model busy and delay the next
+    question)."""
+    import socket
+    import threading
+    import time
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    seen: dict = {}
+
+    def silent_model():
+        conn, _ = server.accept()
+        conn.settimeout(10)
+        try:
+            # Read the whole request, then send nothing and wait: recv()
+            # returns b"" once the client hangs up.
+            while conn.recv(65536):
+                pass
+            seen["closed"] = True
+        except OSError:
+            seen["closed"] = True
+        conn.close()
+
+    threading.Thread(target=silent_model, daemon=True).start()
+    adapter = LMStudioChatAdapter(f"http://127.0.0.1:{port}/v1", "slow", timeout=30)
+    events = stream_answer("What is reliability?", settings=indexed, adapter=adapter)
+    start = next(events)
+    waiting, box = _in_thread(lambda: next(events, None))
+    time.sleep(0.3)  # the request is out; the model is "thinking"
+    began = time.monotonic()
+    events.stop()
+    waiting.join(timeout=5)
+    assert not waiting.is_alive() and time.monotonic() - began < 3
+    assert box.get("value") is None and "error" not in box
+    events.close()
+    time.sleep(0.2)
+    assert seen.get("closed") is True
+    rows = _messages(indexed, start["conversation_id"])
+    assert [r[1] for r in rows] == ["user", "assistant"]
+    server.close()

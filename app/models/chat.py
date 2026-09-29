@@ -14,9 +14,13 @@ of the codebase:
 from __future__ import annotations
 
 import base64
+import contextlib
+import inspect
 import json
 import os
 import re
+import socket
+import threading
 from dataclasses import dataclass
 from typing import Iterator, Protocol, runtime_checkable
 
@@ -62,7 +66,7 @@ class ChatError(RuntimeError):
 class StreamChunk:
     """One piece of a streamed reply: answer ``text`` or model ``thinking``."""
 
-    kind: str  # "text" | "thinking"
+    kind: str  # "text" | "thinking" | "rethink" (text so far was thinking)
     text: str
 
 
@@ -86,6 +90,11 @@ class ThinkSplitter:
 
     Tags can arrive split across deltas, so a possible partial tag at the end
     of the buffer is held back until the next delta decides it.
+
+    Some chat templates open the think block in the prompt, so the reply only
+    carries the closing tag. When a ``</think>`` comes before any ``<think>``,
+    the text already passed on as answer was reasoning: a ``rethink`` chunk
+    says so (move it to the thinking), and what follows is the answer.
     """
 
     _OPEN, _CLOSE = "<think>", "</think>"
@@ -93,25 +102,45 @@ class ThinkSplitter:
     def __init__(self) -> None:
         self._buf = ""
         self._inside = False
+        self._seen_tag = False
+
+    @staticmethod
+    def _partial_tag(buf: str, tags: tuple[str, ...]) -> int:
+        """Length of the longest buffer tail that could start one of ``tags``."""
+        lowered = buf.lower()
+        for size in range(min(max(len(t) for t in tags) - 1, len(buf)), 0, -1):
+            if any(tag.startswith(lowered[-size:]) for tag in tags):
+                return size
+        return 0
 
     def feed(self, text: str) -> list[StreamChunk]:
         self._buf += text
         out: list[StreamChunk] = []
         while self._buf:
+            lowered = self._buf.lower()
+            if not self._inside and not self._seen_tag:
+                close = lowered.find(self._CLOSE)
+                opening = lowered.find(self._OPEN)
+                if close >= 0 and (opening < 0 or close < opening):
+                    # Reasoning that began in the prompt: all of it so far.
+                    out.append(StreamChunk("rethink", ""))
+                    if close:
+                        out.append(StreamChunk("thinking", self._buf[:close]))
+                    self._buf = self._buf[close + len(self._CLOSE):]
+                    self._seen_tag = True
+                    continue
             tag = self._CLOSE if self._inside else self._OPEN
             kind = "thinking" if self._inside else "text"
-            index = self._buf.lower().find(tag)
+            index = lowered.find(tag)
             if index >= 0:
                 if index:
                     out.append(StreamChunk(kind, self._buf[:index]))
                 self._buf = self._buf[index + len(tag):]
                 self._inside = not self._inside
+                self._seen_tag = True
                 continue
-            keep = 0
-            for size in range(min(len(tag) - 1, len(self._buf)), 0, -1):
-                if tag.startswith(self._buf[-size:].lower()):
-                    keep = size
-                    break
+            tags = (tag,) if self._inside or self._seen_tag else (self._OPEN, self._CLOSE)
+            keep = self._partial_tag(self._buf, tags)
             emit = self._buf[: len(self._buf) - keep]
             if emit:
                 out.append(StreamChunk(kind, emit))
@@ -182,6 +211,68 @@ def _openai_chat_completion(
     return ChatResponse(content=content, model=model, raw=data)
 
 
+class StreamCancel:
+    """Ends model requests from another thread (the reader pressed Stop).
+
+    Each request's socket is shut down. That wakes a read that is waiting on
+    the model, even before the response headers arrive (a local model can
+    spend a while reading a long prompt), and tells the model server the
+    client left, so it can stop working on the reply.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sockets: list[socket.socket] = []
+        self.cancelled = False
+
+    def watch(self, sock: socket.socket) -> None:
+        with self._lock:
+            if not self.cancelled:
+                self._sockets.append(sock)
+                return
+        _shutdown(sock)
+
+    def cancel(self) -> None:
+        with self._lock:
+            self.cancelled = True
+            sockets, self._sockets = self._sockets, []
+        for sock in sockets:
+            _shutdown(sock)
+
+    def trace(self, event_name: str, info: dict) -> None:
+        """httpcore trace hook: watch each new connection's socket."""
+        if event_name == "connection.connect_tcp.complete":
+            stream = info.get("return_value")
+            sock = stream.get_extra_info("socket") if stream is not None else None
+            if sock is not None:
+                self.watch(sock)
+
+
+def _shutdown(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass  # already closed
+
+
+@contextlib.contextmanager
+def _open_stream(
+    url: str,
+    *,
+    json: dict,
+    headers: dict | None,
+    timeout: httpx.Timeout,
+    cancel: StreamCancel | None = None,
+) -> Iterator[httpx.Response]:
+    """POST ``json`` and stream the response; ``cancel`` can end it early."""
+    extensions = {"trace": cancel.trace} if cancel is not None else None
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream(
+            "POST", url, json=json, headers=headers, extensions=extensions
+        ) as resp:
+            yield resp
+
+
 def _openai_chat_stream(
     *,
     base_url: str,
@@ -193,6 +284,7 @@ def _openai_chat_stream(
     api_key: str | None = None,
     provider_label: str = "LM Studio",
     extra_payload: dict | None = None,
+    cancel: StreamCancel | None = None,
 ) -> Iterator[StreamChunk]:
     """Stream an OpenAI-compatible ``/chat/completions`` reply (SSE).
 
@@ -212,12 +304,12 @@ def _openai_chat_stream(
         payload.update(extra_payload)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
-        with httpx.stream(
-            "POST",
+        with _open_stream(
             f"{base_url}/chat/completions",
             json=payload,
             headers=headers,
             timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)),
+            cancel=cancel,
         ) as resp:
             if resp.status_code >= 400:
                 resp.read()
@@ -293,6 +385,7 @@ class LMStudioChatAdapter:
         *,
         temperature: float = 0.1,
         max_tokens: int | None = None,
+        cancel: StreamCancel | None = None,
     ) -> Iterator[StreamChunk]:
         return _openai_chat_stream(
             base_url=self.base_url,
@@ -302,6 +395,7 @@ class LMStudioChatAdapter:
             max_tokens=max_tokens,
             timeout=self._timeout,
             extra_payload=self._extra_payload,
+            cancel=cancel,
         )
 
 
@@ -344,6 +438,7 @@ class OpenAIChatAdapter:
         *,
         temperature: float = 0.1,
         max_tokens: int | None = None,
+        cancel: StreamCancel | None = None,
     ) -> Iterator[StreamChunk]:
         if not self._api_key:
             raise ChatError(
@@ -358,6 +453,7 @@ class OpenAIChatAdapter:
             timeout=self._timeout,
             api_key=self._api_key,
             provider_label="OpenAI",
+            cancel=cancel,
         )
 
 
@@ -556,22 +652,34 @@ class EchoChatAdapter:
             yield StreamChunk("text", word)
 
 
+def _takes_cancel(stream) -> bool:
+    try:
+        return "cancel" in inspect.signature(stream).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def stream_reply(
     adapter: ChatAdapter,
     messages: list[ChatMessage],
     *,
     temperature: float = 0.1,
     max_tokens: int | None = None,
+    cancel: StreamCancel | None = None,
 ) -> Iterator[StreamChunk]:
     """Stream a reply from any adapter, splitting out ``<think>`` reasoning.
 
     Adapters without a ``stream`` method answer in one piece via ``generate``.
+    ``cancel`` lets another thread end the request early (adapters that
+    support it; the others finish their current piece first).
     """
     kwargs: dict = {"temperature": temperature}
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     stream = getattr(adapter, "stream", None)
     if callable(stream):
+        if cancel is not None and _takes_cancel(stream):
+            kwargs["cancel"] = cancel
         source = stream(messages, **kwargs)
     else:
         response = adapter.generate(messages, **kwargs)

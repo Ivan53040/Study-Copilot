@@ -137,7 +137,19 @@ fn backend_url(state: tauri::State<'_, BackendUrl>) -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let port = choose_port();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Registered first: a second launch of the app hands over to this one
+    // (its window comes to the front) and exits before starting a backend.
+    // Release builds only, so `tauri dev` still runs next to the installed app.
+    #[cfg(all(desktop, not(debug_assertions)))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![backend_url])

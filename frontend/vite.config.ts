@@ -1,10 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The backend runs on :8765 (same port the packaged app spawns). We proxy API
-// calls so the frontend can use relative paths (no CORS juggling) in dev.
-// Set STUDY_COPILOT_API to point the dev proxy at another port (e.g. when 8765
-// is taken by a different program); scripts/restart_dev.cmd does this.
+// In dev the API calls are proxied to a manually started backend (default
+// :8765), so the frontend can use relative paths (no CORS juggling). Set
+// STUDY_COPILOT_API to point the proxy elsewhere; scripts/restart_dev.cmd uses
+// :8766 because 8765 is often taken by another program. (The packaged desktop
+// app starts its own backend on 8768 or a free port and asks the shell for it.)
 const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
 const BACKEND = env?.STUDY_COPILOT_API || "http://127.0.0.1:8765";
 

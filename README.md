@@ -199,7 +199,8 @@ a live backend status dot and the active chat model.
   *Both*) and individual documents as snippets or full text.
 - **Answers stream in** as the model writes them. Reasoning models show a
   collapsible *Thinking…* line; the send button turns into **Stop** (what was
-  written so far is kept). Hover your question to **edit** it, or use
+  written so far is kept; stopping before the answer starts puts your
+  question back in the box). Hover your question to **edit** it, or use
   **Regenerate** under the last answer; both replace the replies after that
   message. **Quiz me on this** makes a short quiz from the answer's sources.
 - **Answers** render in a reading serif with numbered citation chips; hover a
@@ -253,7 +254,8 @@ program on one of those ports no longer blocks syncing.
 
 The same UI + backend are wrapped as a native desktop app ([`frontend/src-tauri/`](frontend/src-tauri/)).
 The packaged app is **single-launch**: the Rust shell starts the Python backend
-itself and opens a native window.
+itself and opens a native window. Opening it again while it runs brings the
+existing window to the front instead of starting a second backend.
 
 Toolchain (one-time): **Rust**, the **VS C++ Build Tools** (Desktop C++ workload),
 and the **WebView2** runtime.
@@ -306,8 +308,11 @@ Endpoints live so far:
   replaces a saved question and everything after it (edit / regenerate)
 - `POST /chat/stream` — same request, streamed as NDJSON events: `start`
   (conversation, saved question id, sources) → `thinking` / `delta` → `done`
-  (same shape as `POST /chat`) or `error`. Closing the connection stops the
-  model and saves the partial answer
+  (same shape as `POST /chat`) or `error`. `rethink` means the text sent so
+  far was reasoning (models whose template opens `<think>` in the prompt only
+  send `</think>`). Closing the connection saves the partial answer at once,
+  even while the model is still reading the prompt, and stops the model; if
+  `start` never reached the reader, a new question is undone instead
 - `GET  /today` — the Today page in one call (deadlines, reviews due, weak
   topics, plan, weekly stats); `?course=&minutes=`
 - `GET|POST /deadlines`, `DELETE /deadlines/{id}` — exam / assignment dates
@@ -449,7 +454,8 @@ npm run test:e2e                 # browser smoke tests (frontend/e2e)
 The browser tests start their own server (`scripts/e2e_server.py`) on port
 8799 with a copy of the fixture vault in `frontend/e2e/fixtures/vault`, an
 empty database and a scripted chat model, so they never touch your real vault
-or need LM Studio. They cover streaming chat (stop, edit, regenerate), the
+or need LM Studio. The server runs with the project's `.venv` Python when there
+is one (set `E2E_PYTHON` to use another). They cover streaming chat (stop, edit, regenerate), the
 note-scoped chat panel, Notes, Today, "Quiz me on this", appearance and quick
 open.
 

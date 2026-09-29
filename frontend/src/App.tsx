@@ -904,59 +904,67 @@ export function App() {
             </Suspense>
           </main>
 
-          {tab !== "chat" && (
-            <aside className={`chat-dock${dockOpen ? " open" : ""}`} aria-hidden={!dockOpen}>
-              {dockMounted && (
-                <div className="dock-inner" hidden={!dockOpen}>
-                  <div className="dock-head">
-                    <strong>Chat</strong>
-                    <div className="grow" />
+          {/* Kept mounted on the Chat page too (just hidden), so an answer
+              streaming in the panel keeps going when you switch pages. */}
+          <aside
+            className={`chat-dock${dockOpen && tab !== "chat" ? " open" : ""}`}
+            aria-hidden={!dockOpen || tab === "chat"}
+            hidden={tab === "chat"}
+          >
+            {dockMounted && (
+              <div className="dock-inner" hidden={!dockOpen}>
+                <div className="dock-head">
+                  <strong>Chat</strong>
+                  <div className="grow" />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="New chat"
+                    onClick={() => {
+                      setDockConvId(null);
+                      setDockKey((k) => k + 1);
+                    }}
+                  >
+                    <Icon name="square-pen" size={16} />
+                  </button>
+                  {dockConvId && (
                     <button
                       type="button"
                       className="icon-btn"
-                      title="New chat"
+                      title="Open in full view"
                       onClick={() => {
+                        setDockOpen(false);
+                        openChat(dockConvId);
+                        // The chat continues in the full view; start the panel
+                        // afresh so it can't act on an out-of-date copy later.
                         setDockConvId(null);
                         setDockKey((k) => k + 1);
                       }}
                     >
-                      <Icon name="square-pen" size={16} />
+                      <Icon name="maximize" size={15} />
                     </button>
-                    {dockConvId && (
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="Open in full view"
-                        onClick={() => {
-                          setDockOpen(false);
-                          openChat(dockConvId);
-                        }}
-                      >
-                        <Icon name="maximize" size={15} />
-                      </button>
-                    )}
-                    <button type="button" className="icon-btn" title="Close" onClick={() => setDockOpen(false)}>
-                      <Icon name="x" size={16} />
-                    </button>
-                  </div>
-                  <div className="dock-body">
-                    <ChatPage
-                      key={`dock-${dockKey}`}
-                      compact
-                      conversationId={dockConvId}
-                      modelLabel={modelLabel}
-                      vaultRoot={vaultRoot}
-                      activeNote={dockNote}
-                      onConversationCreated={(id) => setDockConvId(id)}
-                      onActivity={refreshRecents}
-                      onOpenNote={openNote}
-                      onQuiz={quizFromAnswer}
-                    />
-                  </div>
+                  )}
+                  <button type="button" className="icon-btn" title="Close" onClick={() => setDockOpen(false)}>
+                    <Icon name="x" size={16} />
+                  </button>
                 </div>
-              )}
-            </aside>
-          )}
+                <div className="dock-body">
+                  <ChatPage
+                    key={`dock-${dockKey}`}
+                    compact
+                    conversationId={dockConvId}
+                    modelLabel={modelLabel}
+                    vaultRoot={vaultRoot}
+                    activeNote={dockNote}
+                    onConversationCreated={(id) => setDockConvId(id)}
+                    onActivity={refreshRecents}
+                    onOpenNote={openNote}
+                    onQuiz={quizFromAnswer}
+                  />
+                </div>
+              </div>
+            )}
+          </aside>
         </div>
       </div>
 
