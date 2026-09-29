@@ -178,7 +178,7 @@ python -m app.main          # http://127.0.0.1:8000  (docs at /docs)
 A single-page app in [`frontend/`](frontend/) — a standalone note workspace
 (Notes browser/editor + Graph view) plus the study tools (Chat, Search,
 Generate, Quiz, Progress, Daily Plan, Past Papers, Library). It calls the API
-through a dev proxy (`/api` → `:8000`).
+through a dev proxy (`/api` → `:8765`, or the URL in `STUDY_COPILOT_API`).
 
 ```bash
 cd frontend
@@ -197,6 +197,11 @@ a live backend status dot and the active chat model.
   **book** chip scopes answers to a course, folder or study set; the **+**
   button picks the context mode (*Auto* retrieval, *Selected* sources only, or
   *Both*) and individual documents as snippets or full text.
+- **Answers stream in** as the model writes them. Reasoning models show a
+  collapsible *Thinking…* line; the send button turns into **Stop** (what was
+  written so far is kept). Hover your question to **edit** it, or use
+  **Regenerate** under the last answer; both replace the replies after that
+  message.
 - **Answers** render in a reading serif with numbered citation chips; hover a
   chip to highlight its source card, click to open the note (or the exact PDF
   / slide page).
@@ -206,7 +211,9 @@ a live backend status dot and the active chat model.
   to an icon rail; under 900 px it becomes a drawer.
 - On every other page a **chat side panel** (speech-bubble button, top right)
   keeps the conversation next to your notes; *Open in full view* moves it to
-  the main chat.
+  the main chat. Next to an open note it answers from **that note** and the
+  notes it links to (or that link back); click the note chip to search all
+  notes instead.
 - Pages other than chat load on first use, and heavy parts (Mermaid, KaTeX,
   code highlighting, the note editors, the graph) load in the background or
   when needed, so start-up only fetches about a fifth of the old bundle.
@@ -290,10 +297,16 @@ Endpoints live so far:
 - `POST /search` — hybrid (keyword + vector) search with citations; filter by
   `course`/`week`/`source_type`/`max_trust_level`
 - `POST /chat` — grounded Q&A; `{message, course?, conversation_id?}` → answer
-  with `[S#]` citations, validated source list, and warnings
+  with `[S#]` citations, validated source list, and warnings. Optional
+  `note_path` answers from one note and its linked notes; `replace_from_id`
+  replaces a saved question and everything after it (edit / regenerate)
+- `POST /chat/stream` — same request, streamed as NDJSON events: `start`
+  (conversation, saved question id, sources) → `thinking` / `delta` → `done`
+  (same shape as `POST /chat`) or `error`. Closing the connection stops the
+  model and saves the partial answer
 - `GET  /conversations` — recent conversations (title, course, last activity)
   for the sidebar; `?limit=` (1–200, default 50)
-- `GET  /conversations/{id}` — replay a conversation
+- `GET  /conversations/{id}` — replay a conversation (messages carry `id`s)
 - `PATCH /conversations/{id}` — rename (`{title}`; blank reverts to the
   automatic title from the first question)
 - `DELETE /conversations/{id}` — delete a conversation and its messages

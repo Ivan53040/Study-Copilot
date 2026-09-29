@@ -432,14 +432,20 @@ function NewTabPicker({ onPick }: { onPick: (path: string) => void }) {
 
 export function NotesPage({
   path,
+  openSeq = 0,
   tocOpen,
   treeOpen,
   detached = false,
+  onActiveChange,
 }: {
   path: string | null;
+  /** Bumped on every open request, so re-opening the same note re-focuses it. */
+  openSeq?: number;
   tocOpen: boolean;
   treeOpen: boolean;
   detached?: boolean;
+  /** Reports the note shown in the active tab (null for none / a new tab). */
+  onActiveChange?: (path: string | null) => void;
 }) {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [tabs, setTabs] = useState<string[]>(() => {
@@ -503,6 +509,11 @@ export function NotesPage({
     }, 2500);
     return () => window.clearTimeout(timer);
   }, []);
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
+  useEffect(() => {
+    onActiveChangeRef.current?.(active && !active.startsWith("new:") ? active : null);
+  }, [active]);
   useEffect(
     () => localStorage.setItem("ws.expanded", JSON.stringify([...expanded])),
     [expanded],
@@ -635,7 +646,7 @@ export function NotesPage({
   // External open request (graph / quick-open) -> open in a tab.
   useEffect(() => {
     if (path) openInTab(path, true);
-  }, [path, openInTab]);
+  }, [path, openSeq, openInTab]);
 
   // Load the active note (skip empty "new tab" placeholders).
   useEffect(() => {

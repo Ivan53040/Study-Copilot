@@ -2,7 +2,9 @@ import type {
   AnalyzeReport,
   AppSettings,
   BacklinkSearchResponse,
+  ChatRequestBody,
   ChatResponse,
+  ChatStreamEvent,
   ConversationDetail,
   ConversationSummary,
   ConceptProgress,
@@ -136,6 +138,88 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   throw new Error(`Cannot reach backend: ${(lastErr as Error)?.message ?? "network error"}`);
 }
 
+async function errorDetail(res: Response): Promise<string> {
+  let detail = res.statusText;
+  try {
+    const body = await res.json();
+    detail = body.detail ?? JSON.stringify(body);
+  } catch {
+    /* ignore */
+  }
+  return `${res.status}: ${detail}`;
+}
+
+/**
+ * Ask a question and receive the answer as it is written (NDJSON events from
+ * `POST /chat/stream`). Resolves with the saved answer; abort `signal` to stop
+ * early (the backend keeps what was written so far).
+ */
+async function chatStream(
+  body: ChatRequestBody,
+  { signal, onEvent }: { signal?: AbortSignal; onEvent: (event: ChatStreamEvent) => void },
+): Promise<ChatResponse> {
+  let res: Response | null = null;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 6 && !res; attempt++) {
+    try {
+      res = await fetch(`${BASE}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      lastErr = e;
+      await sleep(700);
+    }
+  }
+  if (!res) {
+    throw new Error(`Cannot reach backend: ${(lastErr as Error)?.message ?? "network error"}`);
+  }
+  if ((res.status === 404 || res.status === 405) && !res.headers.get("content-type")?.includes("ndjson")) {
+    // A backend without streaming: answer in one piece.
+    const result = await request<ChatResponse>("/chat", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    });
+    onEvent({ type: "done", ...result });
+    return result;
+  }
+  if (!res.ok || !res.body) throw new Error(await errorDetail(res));
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final: ChatResponse | null = null;
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as ChatStreamEvent;
+    if (event.type === "error") throw new Error(event.message);
+    if (event.type === "done") final = event;
+    onEvent(event);
+  };
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        handle(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    handle(buffer + decoder.decode());
+  } finally {
+    reader.releaseLock();
+  }
+  if (!final) throw new Error("The answer stopped unexpectedly. Try again.");
+  return final;
+}
+
 export const api = {
   health: () => request<Health>("/health"),
 
@@ -245,19 +329,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  chat: (body: {
-    message: string;
-    course?: string | null;
-    scope_path?: string | null;
-    study_set_id?: number | null;
-    context_mode?: "retrieval" | "manual" | "hybrid";
-    context_items?: StudySetItem[];
-    conversation_id?: number | null;
-  }) =>
+  chat: (body: ChatRequestBody) =>
     request<ChatResponse>("/chat", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  chatStream,
 
   conversations: (limit = 50) =>
     request<{ conversations: ConversationSummary[] }>(`/conversations?limit=${limit}`),

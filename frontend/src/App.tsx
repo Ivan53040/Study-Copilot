@@ -379,11 +379,16 @@ function RecentItem({
 /* App                                                                       */
 /* ------------------------------------------------------------------------ */
 
+const noteName = (path: string) => (path.split("/").pop() ?? path).replace(/\.(md|markdown|txt)$/i, "");
+
 export function App() {
   const query = new URLSearchParams(window.location.search);
   const detached = query.get("detached") === "1";
   const [tab, setTab] = useState<Tab>(() => (query.get("note") ? "notes" : "chat"));
   const [notePath, setNotePath] = useState<string | null>(() => query.get("note"));
+  const [noteOpenSeq, setNoteOpenSeq] = useState(0);
+  // The note shown in the notes workspace's active tab (for crumbs + chat scope).
+  const [activeNotePath, setActiveNotePath] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => readBool("sc.sidebar.collapsed", false));
   const [mobileNav, setMobileNav] = useState(false);
   const isNarrow = useMediaQuery("(max-width: 900px)");
@@ -393,6 +398,12 @@ export function App() {
   const [treeOpen, setTreeOpen] = useState(() => window.innerWidth >= 1000);
   const [tocOpen, setTocOpen] = useState(() => window.innerWidth >= 1280);
   const [dockOpen, setDockOpen] = useState(false);
+  // Like the notes pane, chats stay mounted once shown so an answer keeps
+  // streaming (and its scroll position) while you look at something else.
+  const [dockMounted, setDockMounted] = useState(false);
+  useEffect(() => {
+    if (dockOpen) setDockMounted(true);
+  }, [dockOpen]);
   const [health, setHealth] = useState<Health | null>(null);
   const [online, setOnline] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -482,6 +493,8 @@ export function App() {
     if (window.innerWidth <= 900) setMobileNav(false);
   }, []);
 
+
+
   const openChat = useCallback((id: number) => {
     setChatConvId(id);
     setChatKey((k) => k + 1);
@@ -491,6 +504,7 @@ export function App() {
 
   const openNote = useCallback((path: string) => {
     setNotePath(path);
+    setNoteOpenSeq((value) => value + 1);
     setTab("notes");
     if (window.innerWidth <= 900) setMobileNav(false);
   }, []);
@@ -532,6 +546,13 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [newChat]);
 
+  const dockNotePath =
+    tab === "notes" && activeNotePath && /\.(md|markdown|txt)$/i.test(activeNotePath) ? activeNotePath : null;
+  const dockNote = useMemo(
+    () => (dockNotePath ? { path: dockNotePath, title: noteName(dockNotePath) } : null),
+    [dockNotePath],
+  );
+
   const modelLabel = modelLabelFrom(settings, health);
   const vaultRoot = health?.vault_root ?? settings?.vault_root ?? null;
   const activeChat = tab === "chat" && chatConvId ? recents.find((c) => c.id === chatConvId) : undefined;
@@ -562,14 +583,16 @@ export function App() {
   );
 
   const current = ALL_NAV.find((n) => n.id === tab);
-  const noteCrumbs = notePath ? notePath.replace(/\.md$/i, "").split("/") : [];
+  const shownNote = activeNotePath ?? notePath;
+  const noteCrumbs = shownNote ? shownNote.replace(/\.md$/i, "").split("/") : [];
+
 
   return (
     <div className="app-shell">
       {mobileNav && <div className="sidebar-scrim" onClick={() => setMobileNav(false)} />}
       <aside className={`sidebar${railOnly ? " collapsed" : ""}${mobileNav ? " mobile-open" : ""}`}>
         <div className="sb-head">
-          <button type="button" className="sb-brand" onClick={newChat} title="New chat">
+          <button type="button" className="sb-brand" onClick={() => newChat()} title="New chat">
             <BrandMark size={20} className="brand-mark" />
             Study Copilot
           </button>
@@ -595,7 +618,7 @@ export function App() {
               type="button"
               className="sb-item sb-new"
               title={railOnly ? `New chat (${MOD}+Shift+O)` : undefined}
-              onClick={newChat}
+              onClick={() => newChat()}
             >
               <span className="sb-new-icon"><Icon name="plus" size={15} /></span>
               <span className="sb-label">New chat</span>
@@ -785,7 +808,7 @@ export function App() {
 
         <div className="main-row">
           <main className={`main${tab === "chat" ? " flush" : ""}${tab === "notes" ? " notes-main" : ""}`}>
-            {tab === "chat" && (
+            <div className="chat-keepalive" hidden={tab !== "chat"}>
               <ChatPage
                 key={`main-${chatKey}`}
                 conversationId={chatConvId}
@@ -797,49 +820,56 @@ export function App() {
                 onOpenNote={openNote}
                 onNavigate={(next) => selectTab(next as Tab)}
               />
-            )}
+            </div>
             {notesMounted && (
               <div className="notes-keepalive" hidden={tab !== "notes"}>
                 <Suspense fallback={<PageLoading />}>
-                  <NotesPage key={vaultRevision} path={notePath} tocOpen={tocOpen} treeOpen={treeOpen} />
+                  <NotesPage
+                    key={vaultRevision}
+                    path={notePath}
+                    openSeq={noteOpenSeq}
+                    tocOpen={tocOpen}
+                    treeOpen={treeOpen}
+                    onActiveChange={setActiveNotePath}
+                  />
                 </Suspense>
               </div>
             )}
             <Suspense fallback={<PageLoading />}>
-            {tab === "lectures" && <LecturesPage />}
-            {tab === "voice" && <VoiceNotesPage onOpenNote={openNote} />}
-            {tab === "wiki" && <WikiPage onOpenNote={openNote} />}
-            {FRAMED.includes(tab) && (
-              <div className="page-frame">
-                {tab === "search" && <SearchPage />}
-                {tab === "generate" && <GeneratePage />}
-                {tab === "quiz" && <QuizPage />}
-                {tab === "progress" && <ProgressPage />}
-                {tab === "plan" && <PlanPage />}
-                {tab === "papers" && <PastPapersPage />}
-                {tab === "library" && <LibraryPage />}
-                {tab === "settings" && (
-                  <SettingsPage
-                    onAppearanceChange={setAppearance}
-                    onSaved={() => {
-                      setVaultRevision((value) => value + 1);
-                      api
-                        .health()
-                        .then((h) => (setHealth(h), setOnline(true)))
-                        .catch(() => setOnline(false));
-                      refreshSettings();
-                    }}
-                  />
-                )}
-              </div>
-            )}
+              {tab === "lectures" && <LecturesPage />}
+              {tab === "voice" && <VoiceNotesPage onOpenNote={openNote} />}
+              {tab === "wiki" && <WikiPage onOpenNote={openNote} />}
+              {FRAMED.includes(tab) && (
+                <div className="page-frame">
+                  {tab === "search" && <SearchPage />}
+                  {tab === "generate" && <GeneratePage />}
+                  {tab === "quiz" && <QuizPage />}
+                  {tab === "progress" && <ProgressPage />}
+                  {tab === "plan" && <PlanPage />}
+                  {tab === "papers" && <PastPapersPage />}
+                  {tab === "library" && <LibraryPage />}
+                  {tab === "settings" && (
+                    <SettingsPage
+                      onAppearanceChange={setAppearance}
+                      onSaved={() => {
+                        setVaultRevision((value) => value + 1);
+                        api
+                          .health()
+                          .then((h) => (setHealth(h), setOnline(true)))
+                          .catch(() => setOnline(false));
+                        refreshSettings();
+                      }}
+                    />
+                  )}
+                </div>
+              )}
             </Suspense>
           </main>
 
           {tab !== "chat" && (
             <aside className={`chat-dock${dockOpen ? " open" : ""}`} aria-hidden={!dockOpen}>
-              {dockOpen && (
-                <>
+              {dockMounted && (
+                <div className="dock-inner" hidden={!dockOpen}>
                   <div className="dock-head">
                     <strong>Chat</strong>
                     <div className="grow" />
@@ -878,12 +908,13 @@ export function App() {
                       conversationId={dockConvId}
                       modelLabel={modelLabel}
                       vaultRoot={vaultRoot}
+                      activeNote={dockNote}
                       onConversationCreated={(id) => setDockConvId(id)}
                       onActivity={refreshRecents}
                       onOpenNote={openNote}
                     />
                   </div>
-                </>
+                </div>
               )}
             </aside>
           )}

@@ -45,7 +45,38 @@ export interface ChatResponse {
   warnings: string[];
   used_vector: boolean;
   model: string;
+  /** Saved ids of the question and the answer (for edit / regenerate). */
+  user_message_id?: number | null;
+  message_id?: number | null;
 }
+
+export interface ChatRequestBody {
+  message: string;
+  course?: string | null;
+  scope_path?: string | null;
+  study_set_id?: number | null;
+  context_mode?: "retrieval" | "manual" | "hybrid";
+  context_items?: StudySetItem[];
+  conversation_id?: number | null;
+  /** Answer from this open note (vault-relative) and the notes it links to. */
+  note_path?: string | null;
+  /** Replace this saved question and everything after it (edit / regenerate). */
+  replace_from_id?: number | null;
+}
+
+export type ChatStreamEvent =
+  | {
+      type: "start";
+      conversation_id: number;
+      user_message_id: number;
+      sources: ChatSource[];
+      used_vector: boolean;
+      model: string;
+    }
+  | { type: "thinking"; text: string }
+  | { type: "delta"; text: string }
+  | ({ type: "done" } & ChatResponse)
+  | { type: "error"; message: string };
 
 export interface ChatSource {
   marker: string;
@@ -77,6 +108,7 @@ export interface ConversationDetail {
   title: string;
   created_at: string | null;
   messages: Array<{
+    id?: number;
     role: "user" | "assistant";
     content: string;
     extra: {
@@ -580,3 +612,4 @@ export interface SettingsPayload {
   require_citations: boolean;
   include_page_images: boolean;
 }
+

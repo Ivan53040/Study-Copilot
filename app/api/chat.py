@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
+from typing import AsyncIterator, Iterator
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import case, delete, func, select
 
-from app.agent.study_agent import answer
+from app.agent.study_agent import ConversationEditError, answer, stream_answer
+from app.logging_config import get_logger
 from app.config.settings import Settings, get_settings
 from app.database.db import session_scope
 from app.database.models import Conversation, Message
 
 router = APIRouter(tags=["chat"])
+logger = get_logger("api.chat")
 
 _TITLE_CHARS = 80
 
@@ -27,6 +33,22 @@ class ChatRequest(BaseModel):
     context_mode: str = "retrieval"
     context_items: list[dict] | None = None
     conversation_id: int | None = None
+    # Answer from this open note (vault-relative) and the notes it links to.
+    note_path: str | None = None
+    # Edit / regenerate: replace this saved question and everything after it.
+    replace_from_id: int | None = None
+
+    def agent_kwargs(self) -> dict:
+        return {
+            "course": self.course,
+            "scope_path": self.scope_path,
+            "study_set_id": self.study_set_id,
+            "context_mode": self.context_mode,
+            "context_items": self.context_items,
+            "conversation_id": self.conversation_id,
+            "note_path": self.note_path or None,
+            "replace_from_id": self.replace_from_id,
+        }
 
 
 class ConversationPatch(BaseModel):
@@ -55,19 +77,74 @@ def _auto_title(first_message: str | None) -> str:
     return text[: _TITLE_CHARS - 1].rstrip() + "…"
 
 
+def _request_error(exc: Exception) -> HTTPException | None:
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, (ConversationEditError, PermissionError, KeyError)):
+        return HTTPException(status_code=400, detail=str(exc).strip("'\""))
+    return None
+
+
 @router.post("/chat")
 def post_chat(req: ChatRequest, settings: Settings = Depends(get_settings)) -> dict:
-    result = answer(
-        req.message,
-        settings=settings,
-        course=req.course,
-        scope_path=req.scope_path,
-        study_set_id=req.study_set_id,
-        context_mode=req.context_mode,
-        context_items=req.context_items,
-        conversation_id=req.conversation_id,
-    )
+    try:
+        result = answer(req.message, settings=settings, **req.agent_kwargs())
+    except Exception as exc:
+        error = _request_error(exc)
+        if error is None:
+            raise
+        raise error from exc
     return result.as_dict()
+
+
+_END = object()
+
+
+def _line(event: dict) -> bytes:
+    return (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+
+
+async def _ndjson(events: Iterator[dict]) -> AsyncIterator[bytes]:
+    """Relay a blocking event generator as NDJSON without blocking the loop.
+
+    When the client disconnects (or presses Stop) the response is cancelled;
+    closing the generator then stops the model request and saves the partial
+    answer.
+    """
+    try:
+        while True:
+            try:
+                event = await anyio.to_thread.run_sync(next, events, _END)
+            except Exception as exc:  # surface failures to the reader
+                error = _request_error(exc)
+                if error is None:
+                    logger.exception("Chat stream failed")
+                message = error.detail if error is not None else f"Chat failed: {exc}"
+                yield _line({"type": "error", "message": message})
+                return
+            if event is _END:
+                return
+            yield _line(event)
+    finally:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(events.close)
+
+
+@router.post("/chat/stream")
+def post_chat_stream(
+    req: ChatRequest, settings: Settings = Depends(get_settings)
+) -> StreamingResponse:
+    """Like ``POST /chat``, but streams the answer as NDJSON events.
+
+    Events: ``start`` → ``thinking`` / ``delta`` … → ``done`` (the saved answer,
+    same shape as ``POST /chat``) or ``error``.
+    """
+    events = stream_answer(req.message, settings=settings, **req.agent_kwargs())
+    return StreamingResponse(
+        _ndjson(events),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/conversations")
@@ -131,6 +208,7 @@ def get_conversation(
             "created_at": _iso(convo.created_at),
             "messages": [
                 {
+                    "id": m.id,
                     "role": m.role,
                     "content": m.content,
                     "extra": m.extra,
