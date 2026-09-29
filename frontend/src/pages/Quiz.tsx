@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { QuizResult, SubmitResult } from "../types";
 import { Warnings } from "../components";
@@ -11,7 +11,18 @@ const OUTCOME_COLOR: Record<string, string> = {
   incorrect: "var(--danger)",
 };
 
-export function QuizPage() {
+export interface QuizPreset {
+  /** Changes on every request, so asking again re-runs it. */
+  key: number;
+  topic: string;
+  course: string | null;
+  /** Limit the quiz to these documents (the sources of a chat answer). */
+  documentIds?: number[];
+  /** Where the request came from, shown above the quiz. */
+  origin?: string;
+}
+
+export function QuizPage({ preset = null }: { preset?: QuizPreset | null }) {
   const [scope, setScope] = useState<VaultScope | null>(null);
   const [week, setWeek] = useState("");
   const [topic, setTopic] = useState("");
@@ -24,24 +35,18 @@ export function QuizPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const generate = async () => {
+  const [origin, setOrigin] = useState<string | null>(null);
+  const run = async (
+    body: Parameters<typeof api.generateQuiz>[0],
+    exam: boolean,
+  ) => {
     setError(null);
     setResult(null);
     setAnswers({});
     setQuiz(null);
     setLoading(true);
     try {
-      const body = {
-        course: scope?.course ?? null,
-        scope_path: scope?.path ?? null,
-        scope_name: scope?.name ?? null,
-        week: week ? Number(week) : null,
-        topic: topic || null,
-        num_questions: Number(num) || 5,
-      };
-      const r = examMode
-        ? await api.generateExam(body)
-        : await api.generateQuiz(body);
+      const r = exam ? await api.generateExam(body) : await api.generateQuiz(body);
       setQuiz(r);
     } catch (e) {
       setError((e as Error).message);
@@ -49,6 +54,45 @@ export function QuizPage() {
       setLoading(false);
     }
   };
+
+  const generate = () => {
+    setOrigin(null);
+    void run(
+      {
+        course: scope?.course ?? null,
+        scope_path: scope?.path ?? null,
+        scope_name: scope?.name ?? null,
+        week: week ? Number(week) : null,
+        topic: topic || null,
+        num_questions: Number(num) || 5,
+      },
+      examMode,
+    );
+  };
+
+  // "Quiz me" from Today or from a chat answer: fill in the form and start.
+  const handledPreset = useRef<number | null>(null);
+  useEffect(() => {
+    if (!preset || handledPreset.current === preset.key) return;
+    handledPreset.current = preset.key;
+    const count = preset.documentIds?.length ? 3 : 5;
+    setScope(null);
+    setWeek("");
+    setTopic(preset.topic);
+    setNum(String(count));
+    setExamMode(false);
+    setOrigin(preset.origin ?? null);
+    void run(
+      {
+        course: preset.course,
+        topic: preset.topic,
+        num_questions: count,
+        document_ids: preset.documentIds?.length ? preset.documentIds : null,
+      },
+      false,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset]);
 
   const submit = async () => {
     if (!quiz?.quiz_id) return;
@@ -109,6 +153,11 @@ export function QuizPage() {
         </div>
       </div>
 
+      {origin && (
+        <div className="note-banner" style={{ marginTop: 12 }}>
+          {origin}
+        </div>
+      )}
       {error && <div className="warn-banner" style={{ marginTop: 12 }}>{error}</div>}
       {quiz && <Warnings items={quiz.warnings} />}
 

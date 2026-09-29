@@ -10,6 +10,7 @@ import type {
   ConceptProgress,
   CourseSummary,
   DailyPlan,
+  Deadline,
   DocumentRow,
   Health,
   Job,
@@ -30,6 +31,7 @@ import type {
   StudySet,
   StudySetItem,
   SubmitResult,
+  TodaySummary,
   TranslatedNoteResult,
   TransformationTemplate,
   TreeNode,
@@ -425,6 +427,7 @@ export const api = {
     week?: number | null;
     topic?: string | null;
     num_questions?: number;
+    document_ids?: number[] | null;
   }) =>
     request<QuizResult>("/quizzes/generate", {
       method: "POST",
@@ -436,6 +439,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ answers }),
     }),
+
+  today: (params: { course?: string | null; minutes?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.course) query.set("course", params.course);
+    if (params.minutes) query.set("minutes", String(params.minutes));
+    const suffix = query.toString();
+    return request<TodaySummary>(`/today${suffix ? `?${suffix}` : ""}`);
+  },
+
+  deadlines: (includePast = false) =>
+    request<{ deadlines: Deadline[] }>(`/deadlines${includePast ? "?include_past=true" : ""}`),
+
+  createDeadline: (body: { title: string; date: string; course?: string | null; kind?: Deadline["kind"] }) =>
+    request<Deadline>("/deadlines", { method: "POST", body: JSON.stringify(body) }),
+
+  deleteDeadline: (id: number) =>
+    request<{ deleted: number }>(`/deadlines/${id}`, { method: "DELETE" }),
 
   progress: (course: string) =>
     request<{ course: string; concepts: ConceptProgress[] }>(

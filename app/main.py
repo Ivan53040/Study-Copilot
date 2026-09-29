@@ -27,6 +27,7 @@ from app.api import (
     settings,
     study_sets,
     sync,
+    today,
     transformations,
     vault,
     voice_notes,
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(voice_notes.router)
     app.include_router(wiki.router)
     app.include_router(settings.router)
+    app.include_router(today.router)
 
     # One-click launcher mode (scripts/launcher.ps1): also serve the built
     # interface from this same origin. Mounted last, so API routes always win.

@@ -201,10 +201,14 @@ a live backend status dot and the active chat model.
   collapsible *Thinking…* line; the send button turns into **Stop** (what was
   written so far is kept). Hover your question to **edit** it, or use
   **Regenerate** under the last answer; both replace the replies after that
-  message.
+  message. **Quiz me on this** makes a short quiz from the answer's sources.
 - **Answers** render in a reading serif with numbered citation chips; hover a
   chip to highlight its source card, click to open the note (or the exact PDF
   / slide page).
+- **Today** (sidebar): countdowns to your exam and assignment dates, topics
+  due for spaced-repetition review, weak topics (Quiz me / Ask), and a plan
+  for the time you have that builds up to the next exam. The home screen shows
+  a one-line nudge when something is close.
 - **Sidebar**: New chat (Ctrl/⌘+Shift+O), Search (Ctrl/⌘+K opens a palette
   over notes, chats and pages), the note workspace, collapsible *Study tools*,
   and **Recents**, your saved conversations with rename and delete. Collapse it
@@ -304,6 +308,9 @@ Endpoints live so far:
   (conversation, saved question id, sources) → `thinking` / `delta` → `done`
   (same shape as `POST /chat`) or `error`. Closing the connection stops the
   model and saves the partial answer
+- `GET  /today` — the Today page in one call (deadlines, reviews due, weak
+  topics, plan, weekly stats); `?course=&minutes=`
+- `GET|POST /deadlines`, `DELETE /deadlines/{id}` — exam / assignment dates
 - `GET  /conversations` — recent conversations (title, course, last activity)
   for the sidebar; `?limit=` (1–200, default 50)
 - `GET  /conversations/{id}` — replay a conversation (messages carry `id`s)

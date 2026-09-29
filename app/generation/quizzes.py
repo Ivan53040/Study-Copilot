@@ -136,6 +136,7 @@ def generate_quiz(
     topic: str | None = None,
     num_questions: int = 5,
     style: str = "quiz",  # "quiz" (mixed MCQ/short) or "exam" (short/essay)
+    document_ids: list[int] | None = None,
     settings: Settings | None = None,
     adapter: ChatAdapter | None = None,
 ) -> QuizResult:
@@ -149,6 +150,11 @@ def generate_quiz(
         scope_path=scope_path,
         week=week,
     )
+    if document_ids:
+        # "Quiz me on this": only the documents an answer was built from.
+        wanted = set(document_ids)
+        flt.document_ids = [d for d in (flt.document_ids or document_ids) if d in wanted] or list(wanted)
+        flt.course = None
     tracking_scope = resolved.course or (
         resolved.name.replace(" ", "").upper() if resolved.name else None
     ) or course or (

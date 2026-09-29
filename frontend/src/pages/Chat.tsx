@@ -49,6 +49,13 @@ export interface Turn {
   notePath?: string | null;
 }
 
+export interface QuizFromAnswer {
+  question: string;
+  course: string | null;
+  documentIds: number[];
+  notePath?: string | null;
+}
+
 export interface ActiveNote {
   path: string;
   title: string;
@@ -68,6 +75,12 @@ export interface ChatPageProps {
   onNavigate?: (tab: string) => void;
   /** The note open next to this chat; questions default to it. */
   activeNote?: ActiveNote | null;
+  /** "Quiz me on this" from an answer. */
+  onQuiz?: (request: QuizFromAnswer) => void;
+  /** Text to put in the composer when the chat opens. */
+  initialInput?: string;
+  /** Show the upcoming-deadline / reviews-due nudge on the home screen. */
+  showToday?: boolean;
 }
 
 const MODE_COPY: Record<ContextMode, { label: string; hint: string }> = {
@@ -543,6 +556,7 @@ function AssistantTurn({
   onOpenNote,
   onRetry,
   onRegenerate,
+  onQuiz,
   busy = false,
 }: {
   turn: Turn;
@@ -551,6 +565,7 @@ function AssistantTurn({
   onOpenNote?: (path: string) => void;
   onRetry: (turn: Turn) => void;
   onRegenerate?: () => void;
+  onQuiz?: () => void;
   busy?: boolean;
 }) {
   const [hot, setHot] = useState<string | null>(null);
@@ -687,6 +702,16 @@ function AssistantTurn({
               <Icon name="rotate-ccw" size={15} />
             </button>
           )}
+          {onQuiz && refs.length > 0 && (
+            <button
+              type="button"
+              className="ghost small quiz-btn"
+              title="Make a short quiz from this answer's sources"
+              onClick={onQuiz}
+            >
+              <Icon name="graduation-cap" size={14} /> Quiz me on this
+            </button>
+          )}
           {refs.length > 0 && (
             <span className="turn-meta">
               {refs.length} {refs.length === 1 ? "source" : "sources"}
@@ -816,6 +841,42 @@ function NoteScopeChip({
   );
 }
 
+/** One line on the home screen: the next deadline and reviews due (links to Today). */
+function TodayNudge({ onOpen }: { onOpen: () => void }) {
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .today()
+      .then((today) => {
+        if (!alive) return;
+        const bits: string[] = [];
+        const next = today.deadlines[0];
+        if (next && next.days_until <= 30) {
+          const when =
+            next.days_until <= 0 ? "today" : next.days_until === 1 ? "tomorrow" : `in ${next.days_until} days`;
+          bits.push(`${next.title} ${when}`);
+        }
+        if (today.due_count) {
+          bits.push(`${today.due_count} ${today.due_count === 1 ? "topic" : "topics"} to review`);
+        }
+        setText(bits.length ? bits.join(" · ") : null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!text) return null;
+  return (
+    <button type="button" className="today-nudge" onClick={onOpen}>
+      <Icon name="sun" size={14} />
+      {text}
+      <Icon name="chevron-right" size={13} />
+    </button>
+  );
+}
+
 /* ------------------------------------------------------------------------ */
 /* Page                                                                      */
 /* ------------------------------------------------------------------------ */
@@ -833,9 +894,12 @@ export function ChatPage({
   onOpenNote,
   onNavigate,
   activeNote = null,
+  onQuiz,
+  initialInput = "",
+  showToday = false,
 }: ChatPageProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput);
   const [scope, setScope] = useState<VaultScope | null>(null);
   const [contextMode, setContextMode] = useState<ContextMode>("retrieval");
   const [docs, setDocs] = useState<DocumentRow[]>([]);
@@ -861,6 +925,14 @@ export function ChatPage({
 
   const noteScope = activeNote && noteScopeOn ? activeNote : null;
 
+  // A chat opened with a prepared question ("Ask" on Today): caret at the end.
+  useEffect(() => {
+    if (!initialInput) return;
+    const el = textareaRef.current;
+    el?.focus();
+    el?.setSelectionRange(el.value.length, el.value.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load a saved conversation once, on mount. (The parent remounts this page via
   // `key` to switch conversations, so a newly created id must not reload it.)
@@ -1095,6 +1167,23 @@ export function ChatPage({
     if (!next && contextMode !== "retrieval") setContextMode("retrieval");
   };
 
+  const quizFrom = (index: number) => {
+    const turn = turns[index];
+    const question = [...turns.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (!turn || !onQuiz) return;
+    const cited = new Set<string>();
+    for (const match of turn.content.matchAll(/\[S(\d+)\]/g)) cited.add(`S${match[1]}`);
+    const used = (turn.sources ?? []).filter((source) => !cited.size || cited.has(source.marker));
+    const documentIds = [...new Set(used.map((source) => source.document_id).filter((id): id is number => Boolean(id && id > 0)))];
+    const courses = used.map((source) => source.course).filter(Boolean) as string[];
+    onQuiz({
+      question: question?.content ?? "",
+      course: courses[0] ?? scope?.course ?? null,
+      documentIds,
+      notePath: turn.notePath ?? null,
+    });
+  };
+
   const tools = (
     <>
       {!noteScope && (
@@ -1168,6 +1257,7 @@ export function ChatPage({
               </button>
             ))}
           </div>
+          {showToday && <TodayNudge onOpen={() => onNavigate?.("today")} />}
           <p className="home-scope-note">
             Answers come only from your own notes, with the sources cited.
           </p>
@@ -1222,6 +1312,7 @@ export function ChatPage({
                       ? () => reask(index - 1, turns[index - 1].content)
                       : undefined
                   }
+                  onQuiz={onQuiz ? () => quizFrom(index) : undefined}
                   busy={loading}
                 />
               ),

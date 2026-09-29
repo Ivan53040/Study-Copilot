@@ -22,10 +22,14 @@ class QuizRequest(BaseModel):
     week: int | None = None
     topic: str | None = None
     num_questions: int = 5
+    # Limit the quiz to these documents (e.g. the sources of a chat answer).
+    document_ids: list[int] | None = None
 
     @model_validator(mode="after")
     def _scope(self):
-        if not (self.course or self.scope_path or self.study_set_id or self.topic):
+        if not (
+            self.course or self.scope_path or self.study_set_id or self.topic or self.document_ids
+        ):
             raise ValueError("Provide at least a vault scope or a topic.")
         return self
 
@@ -51,6 +55,7 @@ def post_generate(
         week=req.week,
         topic=req.topic,
         num_questions=req.num_questions,
+        document_ids=req.document_ids,
         settings=settings,
     )
     return result.as_dict()

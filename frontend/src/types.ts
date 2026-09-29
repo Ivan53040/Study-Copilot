@@ -613,3 +613,39 @@ export interface SettingsPayload {
   include_page_images: boolean;
 }
 
+export interface Deadline {
+  id: number;
+  title: string;
+  course: string | null;
+  kind: "exam" | "assignment" | "other";
+  /** ISO date (YYYY-MM-DD). */
+  date: string;
+  days_until: number;
+}
+
+export interface TopicPriority {
+  concept_id: number;
+  name: string;
+  course: string | null;
+  confidence: number;
+  status: string;
+  exam_frequency: number;
+  due: boolean;
+  priority: number;
+}
+
+export interface TodaySummary {
+  date: string;
+  course: string | null;
+  deadlines: Deadline[];
+  due: TopicPriority[];
+  due_count: number;
+  weak: TopicPriority[];
+  plan: DailyPlan["data"];
+  stats: {
+    concepts: number;
+    average_confidence: number | null;
+    answers_this_week: number;
+    quizzes_this_week: number;
+  };
+}

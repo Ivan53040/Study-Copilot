@@ -3,7 +3,8 @@ import { api } from "./api";
 import type { AppSettings, ConversationSummary, Health } from "./types";
 import { BrandMark, Icon } from "./icons";
 import { useDismiss } from "./components";
-import { ChatPage } from "./pages/Chat";
+import { ChatPage, type QuizFromAnswer } from "./pages/Chat";
+import type { QuizPreset } from "./pages/Quiz";
 import { loadMarkdownExtras, onMarkdownExtrasReady } from "./markdown";
 import { type Appearance, loadAppearance } from "./theme";
 
@@ -23,6 +24,7 @@ const ProgressPage = lazy(() => import("./pages/Progress").then((m) => ({ defaul
 const PlanPage = lazy(() => import("./pages/Plan").then((m) => ({ default: m.PlanPage })));
 const PastPapersPage = lazy(() => import("./pages/PastPapers").then((m) => ({ default: m.PastPapersPage })));
 const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
+const TodayPage = lazy(() => import("./pages/Today").then((m) => ({ default: m.TodayPage })));
 
 function PageLoading() {
   return (
@@ -34,6 +36,7 @@ function PageLoading() {
 
 type Tab =
   | "chat"
+  | "today"
   | "notes"
   | "lectures"
   | "voice"
@@ -50,6 +53,7 @@ type Tab =
 type NavItem = { id: Tab; label: string; icon: string };
 
 const WORKSPACE_NAV: NavItem[] = [
+  { id: "today", label: "Today", icon: "sun" },
   { id: "notes", label: "Notes", icon: "file-text" },
   { id: "lectures", label: "Lecture materials", icon: "layers" },
   { id: "voice", label: "Voice notes", icon: "mic" },
@@ -418,6 +422,9 @@ export function App() {
   const [recents, setRecents] = useState<ConversationSummary[]>([]);
   const [chatConvId, setChatConvId] = useState<number | null>(null);
   const [chatKey, setChatKey] = useState(0);
+  // Text to start a new chat with (from "Ask" on the Today page).
+  const [chatDraft, setChatDraft] = useState("");
+  const [quizPreset, setQuizPreset] = useState<QuizPreset | null>(null);
   const [dockConvId, setDockConvId] = useState<number | null>(null);
   const [dockKey, setDockKey] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -486,14 +493,30 @@ export function App() {
     closeMobile();
   };
 
-  const newChat = useCallback(() => {
+  const newChat = useCallback((draft = "") => {
     setChatConvId(null);
+    setChatDraft(draft);
     setChatKey((k) => k + 1);
     setTab("chat");
     if (window.innerWidth <= 900) setMobileNav(false);
   }, []);
 
+  const startQuiz = useCallback((request: { topic: string; course: string | null; documentIds?: number[]; origin?: string }) => {
+    setQuizPreset({ key: Date.now(), ...request });
+    setTab("quiz");
+    if (window.innerWidth <= 900) setMobileNav(false);
+  }, []);
 
+  const quizFromAnswer = useCallback(
+    (request: QuizFromAnswer) =>
+      startQuiz({
+        topic: request.question || "this answer",
+        course: request.course,
+        documentIds: request.documentIds,
+        origin: `A short quiz on the sources behind: “${request.question.slice(0, 120)}${request.question.length > 120 ? "…" : ""}”`,
+      }),
+    [startQuiz],
+  );
 
   const openChat = useCallback((id: number) => {
     setChatConvId(id);
@@ -812,6 +835,7 @@ export function App() {
               <ChatPage
                 key={`main-${chatKey}`}
                 conversationId={chatConvId}
+                initialInput={chatDraft}
                 userName={appearance.name}
                 modelLabel={modelLabel}
                 vaultRoot={vaultRoot}
@@ -819,6 +843,8 @@ export function App() {
                 onActivity={refreshRecents}
                 onOpenNote={openNote}
                 onNavigate={(next) => selectTab(next as Tab)}
+                onQuiz={quizFromAnswer}
+                showToday
               />
             </div>
             {notesMounted && (
@@ -836,6 +862,18 @@ export function App() {
               </div>
             )}
             <Suspense fallback={<PageLoading />}>
+              {tab === "today" && (
+                <TodayPage
+                  onQuiz={(request) =>
+                    startQuiz({
+                      ...request,
+                      origin: `Quiz on “${request.topic}”${request.course ? ` · ${request.course}` : ""}.`,
+                    })
+                  }
+                  onAsk={(prompt) => newChat(prompt)}
+                  onNavigate={(next) => selectTab(next as Tab)}
+                />
+              )}
               {tab === "lectures" && <LecturesPage />}
               {tab === "voice" && <VoiceNotesPage onOpenNote={openNote} />}
               {tab === "wiki" && <WikiPage onOpenNote={openNote} />}
@@ -843,7 +881,7 @@ export function App() {
                 <div className="page-frame">
                   {tab === "search" && <SearchPage />}
                   {tab === "generate" && <GeneratePage />}
-                  {tab === "quiz" && <QuizPage />}
+                  {tab === "quiz" && <QuizPage preset={quizPreset} />}
                   {tab === "progress" && <ProgressPage />}
                   {tab === "plan" && <PlanPage />}
                   {tab === "papers" && <PastPapersPage />}
@@ -912,6 +950,7 @@ export function App() {
                       onConversationCreated={(id) => setDockConvId(id)}
                       onActivity={refreshRecents}
                       onOpenNote={openNote}
+                      onQuiz={quizFromAnswer}
                     />
                   </div>
                 </div>

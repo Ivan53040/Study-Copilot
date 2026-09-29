@@ -6,10 +6,11 @@ Phase 1 covers ``Document`` and ``Chunk``. Learning-history tables
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -406,3 +407,16 @@ class ChunkEmbedding(Base):
     vector: Mapped[bytes] = mapped_column(LargeBinary)
 
     chunk: Mapped["Chunk"] = relationship(back_populates="embedding")
+
+
+class Deadline(Base):
+    """An exam or assignment date shown on the Today page and used for plans."""
+
+    __tablename__ = "deadlines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String)
+    course: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    kind: Mapped[str] = mapped_column(String, default="exam")  # exam | assignment | other
+    due_date: Mapped[date] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
