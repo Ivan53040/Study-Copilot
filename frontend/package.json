@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "build:web": "vite build --mode web --outDir dist-web --emptyOutDir",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "typecheck": "tsc -b",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -39,6 +41,7 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.0",
     "@tauri-apps/cli": "^2.11.2",
     "@types/cytoscape": "^3.21.9",
     "@types/d3-force": "^3.0.10",

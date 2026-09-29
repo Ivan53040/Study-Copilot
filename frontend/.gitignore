@@ -14,3 +14,7 @@ src-tauri/gen/
 
 # One-click launcher build (npm run build:web)
 dist-web/
+
+# Browser tests (npm run test:e2e)
+playwright-report/
+test-results/

@@ -437,8 +437,26 @@ tables) so follow-up questions keep context.
 ## Tests
 
 ```bash
-python -m pytest
+python -m pytest                 # backend (about 240 tests)
+
+cd frontend
+npm run typecheck                # TypeScript
+npm run build:web                # build the UI the browser tests use
+npx playwright install chromium  # once
+npm run test:e2e                 # browser smoke tests (frontend/e2e)
 ```
+
+The browser tests start their own server (`scripts/e2e_server.py`) on port
+8799 with a copy of the fixture vault in `frontend/e2e/fixtures/vault`, an
+empty database and a scripted chat model, so they never touch your real vault
+or need LM Studio. They cover streaming chat (stop, edit, regenerate), the
+note-scoped chat panel, Notes, Today, "Quiz me on this", appearance and quick
+open.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every push
+to `main`, `claude/**` and `codex/**` branches and on pull requests: backend
+tests, type-check + build, the browser tests, and a compile check of the
+desktop shell.
 
 ## Evaluation
 
@@ -490,7 +508,9 @@ app/
   sync/         local-vault -> iCloud mirror (robocopy) + background scheduler
   api/          routers (health, ingest, courses, search, chat, notes,
                 quizzes, plans, exams, vault, sync)
-scripts/        CLI entrypoints (ingest, embed, sync, evaluate)
+scripts/        CLI entrypoints (ingest, embed, sync, evaluate), launcher,
+                e2e_server.py for the browser tests
 evals/          evaluation harness + seed dataset + report
 tests/          pytest suite
+frontend/e2e/   Playwright browser tests + fixture vault
 ```
