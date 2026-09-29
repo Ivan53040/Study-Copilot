@@ -26,6 +26,37 @@ original notes are never overwritten.
   wikilinks and backlinks, blocks denied paths, and limits generated write-back
   to the safe output area.
 
+### Visual page retrieval (optional)
+
+PDF pages and PowerPoint slides can be indexed as visual evidence. In Settings,
+save a vision-capable model for **Visual page indexing**, then click **Index next
+20 pages**. This runs in the background and embeds the new descriptions. The
+equivalent command-line workflow is: set `task_models.visual_pages` to a local
+vision model in `config.yaml`, ingest the source files, then run:
+
+```bash
+python -m scripts.index_visual_pages --limit 20
+python -m scripts.embed
+```
+
+The first command adds one searchable visual description per page; later runs
+skip pages already indexed. `--document-id ID` limits a run to one document.
+Set `generation.include_page_images: true` after selecting a vision-capable
+`task_models.chat` model. Chat then sends up to two retrieved original page
+images alongside text evidence. If the model rejects images, chat retries with
+text and warns that visual evidence was unavailable. Page citations open the
+original page in the app.
+
+For a page-level retrieval benchmark, copy
+`evals/page_dataset.example.json`, label the relevant pages in your vault,
+and run `python -m scripts.evaluate_pages your_dataset.json --k 5`.
+The report includes Recall@K, MRR, MAP, and nDCG; it needs real page labels.
+For answer quality, label individual claims using
+`evals/grounding_dataset.example.json` and run
+`python -m scripts.evaluate_grounding your_claims.json`. This measures whether
+claims are supported by the source material and whether each cited page
+supports the claim; citation-marker validity alone does not establish either.
+
 The architecture and key engineering decisions are documented in
 [`docs/architecture.md`](docs/architecture.md).
 

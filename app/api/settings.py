@@ -57,6 +57,7 @@ class SettingsUpdate(BaseModel):
     min_chunk_tokens: int = Field(default=8, ge=0, le=200)
     temperature: float = Field(ge=0, le=2)
     require_citations: bool = True
+    include_page_images: bool = False
 
 
 class ConnectionTest(BaseModel):
@@ -121,6 +122,7 @@ def _public_settings() -> dict:
         "min_chunk_tokens": settings.ingestion.min_chunk_tokens,
         "temperature": settings.generation.temperature,
         "require_citations": settings.generation.require_citations,
+        "include_page_images": settings.generation.include_page_images,
     }
 
 
@@ -185,6 +187,7 @@ def update_settings(req: SettingsUpdate) -> dict:
 
     valid_tasks = {
         "chat",
+        "visual_pages",
         "deep_ask",
         "transformations",
         "quiz_marking",
@@ -210,6 +213,7 @@ def update_settings(req: SettingsUpdate) -> dict:
     generation = data.setdefault("generation", {})
     generation["temperature"] = req.temperature
     generation["require_citations"] = req.require_citations
+    generation["include_page_images"] = req.include_page_images
 
     # Validate the complete config before replacing the live file.
     serialized = _dump_config(data)

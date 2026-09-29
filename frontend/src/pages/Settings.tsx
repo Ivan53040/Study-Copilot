@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppSettings } from "../types";
+import type { AppSettings, Job } from "../types";
 
 export type Appearance = {
   material: "solid" | "liquid-glass";
@@ -90,6 +90,7 @@ export const APPEARANCE_PRESETS: { name: string; description: string; colors: Ap
 const DEFAULT_APPEARANCE: Appearance = APPEARANCE_PRESETS[0].colors;
 const TASK_MODEL_LABELS: Array<[keyof AppSettings["task_models"], string]> = [
   ["chat", "Chat"],
+  ["visual_pages", "Visual page indexing"],
   ["deep_ask", "Deep ask"],
   ["transformations", "Transformations"],
   ["quiz_marking", "Quiz marking"],
@@ -158,6 +159,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   const [appearance, setAppearance] = useState(loadAppearance);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [visualJob, setVisualJob] = useState<Job | null>(null);
   // Write-only: typed here, sent on save, never returned by the backend.
   const [apiKey, setApiKey] = useState("");
 
@@ -216,6 +218,22 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
     api.settings().then(setSettings).catch((e) => setMessage((e as Error).message));
   }, []);
 
+  useEffect(() => {
+    if (!visualJob || !["queued", "running"].includes(visualJob.status)) return;
+    const timer = window.setTimeout(() => {
+      api.job(visualJob.id).then(setVisualJob).catch((e) => setMessage((e as Error).message));
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [visualJob]);
+
+  const indexVisualPages = async () => {
+    try {
+      setVisualJob(await api.createJob("visual_pages_index", { limit: 20 }));
+    } catch (e) {
+      setMessage((e as Error).message);
+    }
+  };
+
   const updateAppearance = (next: Appearance) => {
     setAppearance(next);
     applyAppearance(next);
@@ -254,6 +272,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         min_chunk_tokens: settings.min_chunk_tokens,
         temperature: settings.temperature,
         require_citations: settings.require_citations,
+        include_page_images: settings.include_page_images,
       });
       setSettings(result.settings);
       setApiKey("");
@@ -305,6 +324,9 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   if (!settings) {
     return <div className="spinner">{message || "Loading settings…"}</div>;
   }
+  const visualSummary = visualJob?.result?.visual_pages as
+    | { indexed: number; skipped: number; errors: string[] }
+    | undefined;
 
   return (
     <form className="settings-page" onSubmit={save}>
@@ -445,6 +467,10 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
             <input type="checkbox" checked={settings.require_citations} onChange={(e) => setSettings({ ...settings, require_citations: e.target.checked })} />
             Require source citations
           </label>
+          <label className="check-field">
+            <input type="checkbox" checked={settings.include_page_images} onChange={(e) => setSettings({ ...settings, include_page_images: e.target.checked })} />
+            Send retrieved page images to the chat model
+          </label>
           {settings.default_provider === "lmstudio" && (
             <button type="button" onClick={testConnection} disabled={busy}>
               Test connection
@@ -495,6 +521,18 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
               </div>
             );
           })}
+        </div>
+      </section>
+
+      <section className="settings-section card">
+        <div>
+          <h2>Visual pages</h2>
+          <p className="muted">Save a vision-capable task model above, then describe the next 20 PDF pages or PowerPoint slides for search.</p>
+        </div>
+        <div>
+          <button type="button" onClick={indexVisualPages} disabled={busy || visualJob?.status === "queued" || visualJob?.status === "running"}>Index next 20 pages</button>
+          {visualJob && <p className="muted">{visualJob.status}: {visualJob.error ?? visualJob.message ?? ""}</p>}
+          {visualSummary && <p className="muted">{visualSummary.indexed} pages indexed, {visualSummary.skipped} already indexed, {visualSummary.errors.length} errors.</p>}
         </div>
       </section>
 

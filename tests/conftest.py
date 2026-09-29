@@ -12,6 +12,15 @@ from app.config.settings import (
     VaultConfig,
 )
 from app.database import db as db_module
+from app.vault import service as vault_service
+
+
+@pytest.fixture(autouse=True)
+def _isolated_link_cache(monkeypatch, tmp_path: Path) -> None:
+    """Keep note-link cache writes out of the real ``data/`` directory."""
+    monkeypatch.setattr(
+        vault_service, "_link_cache_path", lambda root: tmp_path / "note_links.json"
+    )
 
 
 @pytest.fixture

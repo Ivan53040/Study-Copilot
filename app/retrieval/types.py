@@ -20,6 +20,7 @@ class SearchHit:
     path: str
     score: float
     retrieval: str  # "keyword" | "vector" | "hybrid"
+    kind: str | None = None  # "visual_page" for image-backed page descriptions
 
     def as_dict(self, *, include_content: bool = True) -> dict:
         d = {
@@ -35,6 +36,7 @@ class SearchHit:
             "path": self.path,
             "score": round(self.score, 5),
             "retrieval": self.retrieval,
+            "kind": self.kind,
         }
         if include_content:
             d["content"] = self.content

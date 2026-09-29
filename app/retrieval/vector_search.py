@@ -8,6 +8,7 @@ swapped for Chroma/Qdrant later without touching callers.
 from __future__ import annotations
 
 import numpy as np
+import json
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -37,7 +38,7 @@ def vector_search(
         f"""
         SELECT c.id, c.document_id, c.content, c.heading, c.page_number,
                c.course, c.week, c.source_type, c.trust_level,
-               d.title, d.path, e.vector
+               d.title, d.path, e.vector, c.extra
         FROM chunk_embeddings e
         JOIN chunks c ON c.id = e.chunk_id
         JOIN documents d ON d.id = c.document_id
@@ -75,6 +76,7 @@ def vector_search(
                 path=r.path,
                 score=float(sims[int(i)]),
                 retrieval="vector",
+                kind=json.loads(r.extra or "{}").get("kind"),
             )
         )
     return hits

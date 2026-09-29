@@ -1,0 +1,15 @@
+{
+  "answers": [
+    {
+      "id": "rotation-example",
+      "claims": [
+        {
+          "text": "The slide shows a left rotation around the parent node.",
+          "supported": true,
+          "cited": true,
+          "citation_correct": true
+        }
+      ]
+    }
+  ]
+}

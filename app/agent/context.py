@@ -30,6 +30,8 @@ def build_context(
     for i, hit in enumerate(hits, start=1):
         sid = f"S{i}"
         header = f"[{sid}] {format_citation_markdown(hit)} (trust {hit.trust_level})"
+        if hit.kind == "visual_page":
+            header += " (AI visual description; verify against the original page image)"
         body = hit.content.strip()
         block = f"{header}\n{body}"
         if blocks and budget + len(block) > max_chars:

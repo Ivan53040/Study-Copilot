@@ -19,6 +19,7 @@ from app.models.chat import (
     LMStudioChatAdapter,
     OpenAIChatAdapter,
     get_chat_adapter,
+    image_message,
 )
 
 
@@ -99,6 +100,29 @@ def test_lmstudio_adapter_sends_no_auth_header(monkeypatch):
     adapter = LMStudioChatAdapter(base_url="http://localhost:1234/v1", model="local")
     adapter.generate([ChatMessage(role="user", content="hello")])
     assert captured["headers"] is None  # local path stays unauthenticated
+
+
+def test_lmstudio_adapter_sends_page_image(monkeypatch):
+    captured = {}
+
+    def fake_post(url, *, json, headers, timeout):
+        captured["messages"] = json["messages"]
+        return _FakeResponse({"choices": [{"message": {"content": "seen"}}]})
+
+    monkeypatch.setattr(chat_module.httpx, "post", fake_post)
+    adapter = LMStudioChatAdapter(base_url="http://localhost:1234/v1", model="vision")
+    adapter.generate([image_message("Inspect page", b"png")])
+    assert captured["messages"][0]["content"][1]["image_url"]["url"].endswith("cG5n")
+
+
+def test_anthropic_adapter_translates_inline_page_image():
+    client = _FakeAnthropicClient()
+    adapter = AnthropicChatAdapter(api_key="x", client=client)
+    adapter.generate([image_message("Inspect page", b"png")])
+    part = client.calls[0]["messages"][0]["content"][1]
+    assert part["type"] == "image"
+    assert part["source"]["media_type"] == "image/png"
+    assert part["source"]["data"] == "cG5n"
 
 
 def test_lmstudio_adapter_can_send_extra_payload(monkeypatch):

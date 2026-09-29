@@ -183,6 +183,27 @@ def _handler(job_type: str) -> JobHandler:
             return report.as_dict()
 
         return run
+    if job_type == "visual_pages_index":
+        from app.ingestion.visual_pages import index_visual_pages
+        from app.retrieval.indexing import index_embeddings
+
+        def run(payload: dict, settings: Settings, job_id: int) -> dict:
+            update_progress(job_id, settings=settings, current=0, total=2, message="Describing source pages...")
+            limit = min(100, max(1, int(payload.get("limit", 20))))
+            document_id = payload.get("document_id")
+            report = index_visual_pages(
+                settings=settings,
+                document_id=int(document_id) if document_id is not None else None,
+                limit=limit,
+            )
+            if not report.indexed and report.errors:
+                raise RuntimeError(report.errors[0])
+            update_progress(job_id, settings=settings, current=1, total=2, message="Embedding page descriptions...")
+            embedded = index_embeddings(settings=settings) if report.indexed else None
+            update_progress(job_id, settings=settings, current=2, total=2, message="Visual page index complete.")
+            return {"visual_pages": report.as_dict(), "embeddings": embedded.as_dict() if embedded else None}
+
+        return run
     if job_type == "lecture_import_scan":
         from app.api.lectures import import_folder_impl
         from app.ingestion.service import ingest

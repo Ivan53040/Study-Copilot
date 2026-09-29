@@ -1,0 +1,12 @@
+{
+  "queries": [
+    {
+      "id": "rotation-example",
+      "query": "Why does this red-black tree case need a rotation?",
+      "course": "CSSE0000",
+      "relevant_pages": [
+        {"path": "Lecture Materials/CSSE0000/Red Black Trees.pdf", "page": 12, "grade": 2}
+      ]
+    }
+  ]
+}

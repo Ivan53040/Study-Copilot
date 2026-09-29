@@ -57,11 +57,38 @@ export function stripFrontmatter(raw: string): string {
   return raw;
 }
 
+/**
+ * remark-math uses dollar delimiters by default, while Obsidian and many
+ * LaTeX notes use \\( ... \\) and \\[ ... \\]. Normalize the latter before
+ * parsing so existing notes render without requiring a rewrite.
+ *
+ * Fenced code blocks and inline code spans are kept untouched because a
+ * backslash-delimited example inside code should remain literal text.
+ */
+export function normalizeMathDelimiters(markdown: string): string {
+  const normalizeText = (text: string) => {
+    const codeSpans: string[] = [];
+    const withoutCode = text.replace(/(`+)([\s\S]*?)\1/g, (match) => {
+      codeSpans.push(match);
+      return `\u0000CODE_${codeSpans.length - 1}\u0000`;
+    });
+    const normalized = withoutCode
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_match, formula: string) => `$$${formula}$$`)
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_match, formula: string) => `$${formula}$`);
+    return normalized.replace(/\u0000CODE_(\d+)\u0000/g, (_match, index) => codeSpans[Number(index)]);
+  };
+
+  return markdown
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g)
+    .map((part, index) => (index % 2 === 1 ? part : normalizeText(part)))
+    .join("");
+}
+
 // Rewrite [[Name#Heading|alias]] wikilinks to markdown links with a wikilink:
 // scheme, so a custom `a` component can resolve and open them. The #heading is
 // kept in the target; embeds (![[Name]]) become images a custom `img` handles.
 export function wikilinksToMd(text: string): string {
-  return text.replace(
+  return normalizeMathDelimiters(text).replace(
     /\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]+))?\]\]/g,
     (_m, name: string, heading?: string, alias?: string) => {
       const target = name.trim() + (heading ?? "").trim();

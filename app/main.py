@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,6 +34,7 @@ from app.config.settings import get_settings
 from app.database.db import init_db
 from app.logging_config import get_logger
 from app.sync.scheduler import SyncScheduler
+from app.vault.service import warm_note_cache
 
 logger = get_logger("app")
 
@@ -44,10 +46,23 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     app.state.sync_scheduler = None
-    if settings.sync.enabled and settings.sync.run_in_app:
+    if settings.sync.enabled:
         scheduler = SyncScheduler(settings)
-        scheduler.start()
         app.state.sync_scheduler = scheduler
+        # Reconcile the local and cloud vaults in the background so the app
+        # opens instantly. Failures are recorded by the scheduler and do not
+        # prevent startup; vault writes wait for the run through the shared
+        # lock in app.sync.gate.
+        scheduler.run_once_in_background()
+        if settings.sync.run_in_app:
+            scheduler.start()
+    # Fill the note/link cache in the background so the first open is instant.
+    threading.Thread(
+        target=warm_note_cache,
+        args=(settings,),
+        name="note-cache-warm",
+        daemon=True,
+    ).start()
     try:
         yield
     finally:
@@ -101,4 +116,4 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8765, reload=True)

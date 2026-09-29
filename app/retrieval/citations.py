@@ -35,6 +35,8 @@ def format_citation(hit: SearchHit) -> dict:
         "path": hit.path,
         "source_type": hit.source_type,
         "trust_level": hit.trust_level,
+        "document_id": hit.document_id,
+        "page_number": hit.page_number,
     }
 
 

@@ -19,6 +19,7 @@ class SyncScheduler:
         self.settings = settings
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._startup_thread: threading.Thread | None = None
         self.last_result = None
         self.last_run_at: datetime | None = None
         self.last_error: str | None = None
@@ -35,11 +36,29 @@ class SyncScheduler:
 
     def _loop(self) -> None:
         interval = max(1, self.settings.sync.interval_minutes) * 60
-        # First sync shortly after startup, then every interval.
-        if not self._stop.wait(10):
-            self._run_once()
+        # The startup sync runs separately (see run_once_in_background); this
+        # loop is only for installations that also opt into interval sync.
         while not self._stop.wait(interval):
             self._run_once()
+
+    def run_once(self) -> None:
+        """Run one sync immediately and retain its result for the status API."""
+        self._run_once()
+
+    def run_once_in_background(self) -> None:
+        """Kick off the startup sync without blocking app startup.
+
+        Vault writes wait for this run via the shared lock in app.sync.gate,
+        so the UI opens instantly while the vaults are still reconciled
+        before the first edit.
+        """
+        if self._startup_thread and self._startup_thread.is_alive():
+            return
+        self._startup_thread = threading.Thread(
+            target=self._run_once, name="icloud-sync-startup", daemon=True
+        )
+        self._startup_thread.start()
+        logger.info("Startup sync running in the background (mode=%s)", self.settings.sync.mode)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -57,8 +76,9 @@ class SyncScheduler:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        for thread in (self._thread, self._startup_thread):
+            if thread:
+                thread.join(timeout=5)
         logger.info("Sync scheduler stopped")
 
     def status(self) -> dict:

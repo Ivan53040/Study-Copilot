@@ -109,6 +109,7 @@ class RetrievalConfig(BaseModel):
 class GenerationConfig(BaseModel):
     temperature: float = 0.1
     require_citations: bool = True
+    include_page_images: bool = False  # enable after selecting a vision-capable chat model
 
 
 class TaskModelOverride(BaseModel):
@@ -119,6 +120,9 @@ class TaskModelOverride(BaseModel):
 
 class TaskModelsConfig(BaseModel):
     chat: TaskModelOverride = Field(default_factory=TaskModelOverride)
+    visual_pages: TaskModelOverride = Field(
+        default_factory=lambda: TaskModelOverride(provider="lmstudio")
+    )
     deep_ask: TaskModelOverride = Field(default_factory=TaskModelOverride)
     transformations: TaskModelOverride = Field(default_factory=TaskModelOverride)
     quiz_marking: TaskModelOverride = Field(default_factory=TaskModelOverride)

@@ -2,15 +2,41 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import fitz
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.config.settings import Settings, get_settings
+from app.database.db import session_scope
+from app.database.models import Chunk, Document
+from app.ingestion.page_images import render_page
+from app.security.paths import PathSecurityError
 from app.retrieval.citations import format_citation
 from app.retrieval.service import search
 from app.study_sets.service import metadata_filter_for_scope
 
 router = APIRouter(tags=["search"])
+
+
+@router.get("/source-pages/{document_id}/{page_number}")
+def get_source_page(
+    document_id: int, page_number: int, settings: Settings = Depends(get_settings)
+) -> Response:
+    with session_scope(settings) as session:
+        document = session.get(Document, document_id)
+        if document is None or not session.scalar(
+            select(Chunk.id).where(
+                Chunk.document_id == document_id, Chunk.page_number == page_number
+            ).limit(1)
+        ):
+            raise HTTPException(status_code=404, detail="Indexed source page not found")
+        path = document.path
+    try:
+        image = render_page(path, page_number, settings)
+    except (OSError, ValueError, PathSecurityError, fitz.FileDataError) as exc:
+        raise HTTPException(status_code=404, detail="Source page unavailable") from exc
+    return Response(content=image, media_type="image/png")
 
 
 class SearchRequest(BaseModel):

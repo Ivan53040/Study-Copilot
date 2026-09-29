@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::Manager;
@@ -7,10 +7,24 @@ use tauri::Manager;
 // Holds the spawned backend process so we can stop it when the app closes.
 struct Backend(Mutex<Option<Child>>);
 
+const BACKEND_PORT: &str = "8765";
+
+fn is_project_dir(path: &Path) -> bool {
+    path.join(".venv/Scripts/pythonw.exe").is_file() && path.join("app/main.py").is_file()
+}
+
 fn project_dir() -> Option<PathBuf> {
     std::env::var_os("STUDY_COPILOT_PROJECT_DIR")
         .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok()?.parent().map(PathBuf::from))
+        .filter(|path| is_project_dir(path))
+        .or_else(|| {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            is_project_dir(&path).then_some(path)
+        })
+        .or_else(|| {
+            let path = std::env::current_exe().ok()?.parent()?.to_path_buf();
+            is_project_dir(&path).then_some(path)
+        })
 }
 
 // In a release build the app starts the Python backend itself (single launch).
@@ -22,7 +36,7 @@ fn spawn_backend() -> Option<Child> {
     let mut cmd = Command::new(python);
     cmd.args([
         "-m", "uvicorn", "app.main:app",
-        "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning",
+        "--host", "127.0.0.1", "--port", BACKEND_PORT, "--log-level", "warning",
     ])
     .current_dir(&project_dir)
     .stdin(Stdio::null());

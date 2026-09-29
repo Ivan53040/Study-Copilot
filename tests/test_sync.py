@@ -35,6 +35,13 @@ def test_exclude_dirs_passed():
     assert "/XD" in cmd and ".trash" in cmd
 
 
+def test_machine_specific_files_are_excluded():
+    cmd = _build_command(Path("src"), Path("dst"), "mirror", [])
+    assert "/XF" in cmd
+    assert "workspace*.json" in cmd
+    assert "*.icloud" in cmd
+
+
 def test_refuses_empty_source(tmp_path: Path):
     local = tmp_path / "local"
     local.mkdir()  # exists but empty

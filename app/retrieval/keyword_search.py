@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -44,7 +45,7 @@ def keyword_search(
         f"""
         SELECT c.id, c.document_id, c.content, c.heading, c.page_number,
                c.course, c.week, c.source_type, c.trust_level,
-               d.title, d.path,
+               d.title, d.path, c.extra,
                bm25(chunks_fts) AS bm25
         FROM chunks_fts
         JOIN chunks c ON c.id = chunks_fts.rowid
@@ -74,6 +75,7 @@ def keyword_search(
                 path=r.path,
                 score=-float(r.bm25),
                 retrieval="keyword",
+                kind=json.loads(r.extra or "{}").get("kind"),
             )
         )
     return hits

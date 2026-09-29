@@ -5,14 +5,14 @@ For a given note this scans every other note in the vault for:
   - unlinked mentions: the note's name appearing as plain text (outside links,
     code, and frontmatter), which the UI can convert into a wikilink
 
-Note text is cached per-file by (mtime, size), so repeat requests do a
-stat-only walk instead of re-reading the whole vault.
+Note text comes from the shared per-note cache in app.vault.service (cached by
+(mtime, size)), so repeat requests do a stat-only walk instead of re-reading
+the whole vault.
 """
 
 from __future__ import annotations
 
 import re
-import threading
 from pathlib import Path
 from typing import Callable
 
@@ -23,8 +23,8 @@ from app.security.paths import assert_workspace_readable
 from app.vault.service import (
     _FENCE_RE,
     _WIKILINK_RE,
-    _iter_notes,
     _vault_root,
+    note_texts,
     search_notes,
     write_note,
 )
@@ -36,38 +36,9 @@ _AI_CANDIDATE_LIMIT = 80
 _AI_WIKI_CONTEXT_LIMIT = 12_000
 _RELEVANT_LINE_RE = re.compile(r"(?:final\s+)?relevant\s*:\s*([^\r\n]+)", re.IGNORECASE)
 
-_CACHE_LOCK = threading.Lock()
-_TEXT_CACHE: dict = {"root": None, "texts": {}}  # rel -> (mtime_ns, size, text)
-
-
 def _vault_texts(settings: Settings) -> dict[str, str]:
-    """Full text of every note in the vault, cached by (mtime, size)."""
-    root = str(_vault_root(settings))
-    with _CACHE_LOCK:
-        snapshot = dict(_TEXT_CACHE["texts"]) if _TEXT_CACHE["root"] == root else {}
-
-    texts: dict[str, str] = {}
-    fresh: dict[str, tuple[int, int, str]] = {}
-    for path, rel in _iter_notes(settings):
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        cached = snapshot.get(rel)
-        if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
-            texts[rel] = cached[2]
-            fresh[rel] = cached
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        texts[rel] = text
-        fresh[rel] = (stat.st_mtime_ns, stat.st_size, text)
-
-    with _CACHE_LOCK:
-        _TEXT_CACHE.update(root=root, texts=fresh)
-    return texts
+    """Full text of every note, served from the shared per-note cache."""
+    return note_texts(settings)
 
 
 def _blank(match: re.Match) -> str:

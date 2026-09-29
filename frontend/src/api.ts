@@ -44,11 +44,14 @@ const BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// The packaged app spawns the backend at launch, so the first calls may hit a
+// not-yet-listening server. Retry connection failures (not HTTP errors) for
+// ~30s so a slow backend start doesn't strand the UI with an error.
+const CONNECT_ATTEMPTS = 44; // 44 × 700ms ≈ 30s
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  // The packaged app spawns the backend at launch, so the first calls may hit a
-  // not-yet-listening server. Retry connection failures (not HTTP errors).
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < CONNECT_ATTEMPTS; attempt++) {
     let res: Response;
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -77,7 +80,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < CONNECT_ATTEMPTS; attempt++) {
     let res: Response;
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -178,6 +181,8 @@ export const api = {
 
   lectureViewerPageUrl: (id: number, page: number, scale: number) =>
     `${BASE}/lecture-materials/${id}/viewer/pages/${page}?scale=${scale}`,
+  sourcePageUrl: (id: number, page: number) =>
+    `${BASE}/source-pages/${id}/${page}`,
 
   importLectureFolder: (folder_path: string) =>
     request<{ count: number; paths: string[] }>("/lecture-materials/import-folder", {

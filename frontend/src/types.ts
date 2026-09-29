@@ -7,6 +7,8 @@ export interface Citation {
   path: string;
   source_type: string | null;
   trust_level: number;
+  document_id?: number;
+  page_number?: number | null;
 }
 
 export interface SearchHit {
@@ -22,6 +24,7 @@ export interface SearchHit {
   path: string;
   score: number;
   retrieval: string;
+  kind?: string | null;
   content?: string;
   citation: Citation;
 }
@@ -479,6 +482,7 @@ export type ChatProvider = "lmstudio" | "openai" | "anthropic" | "echo";
 
 export type TaskModelName =
   | "chat"
+  | "visual_pages"
   | "deep_ask"
   | "transformations"
   | "quiz_marking"
@@ -508,6 +512,7 @@ export interface AppSettings {
   min_chunk_tokens: number;
   temperature: number;
   require_citations: boolean;
+  include_page_images: boolean;
 }
 
 /** The editable subset sent to PUT /settings (status fields are server-derived). */
@@ -530,4 +535,5 @@ export interface SettingsPayload {
   min_chunk_tokens: number;
   temperature: number;
   require_citations: boolean;
+  include_page_images: boolean;
 }

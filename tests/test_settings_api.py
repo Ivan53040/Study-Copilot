@@ -113,6 +113,28 @@ def test_unknown_provider_rejected(temp_config):
     assert res.status_code == 400
 
 
+def test_visual_page_settings_round_trip(temp_config):
+    _, vault = temp_config
+    res = TestClient(app).put(
+        "/settings",
+        json=_payload(
+            vault,
+            include_page_images=True,
+            task_models={
+                "visual_pages": {
+                    "provider": "lmstudio",
+                    "model": "local-vision-model",
+                    "base_url": None,
+                }
+            },
+        ),
+    )
+    assert res.status_code == 200, res.text
+    saved = res.json()["settings"]
+    assert saved["include_page_images"] is True
+    assert saved["task_models"]["visual_pages"]["model"] == "local-vision-model"
+
+
 def test_save_preserves_config_comments(temp_config):
     cfg, vault = temp_config
     cfg.write_text("# KEEP THIS COMMENT\n" + cfg.read_text(encoding="utf-8"), "utf-8")

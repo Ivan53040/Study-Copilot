@@ -14,8 +14,9 @@ from app.agent.validation import validate_answer
 from app.config.settings import Settings, get_settings
 from app.database.db import session_scope
 from app.database.models import Conversation, Message
+from app.ingestion.page_images import render_page
 from app.logging_config import get_logger
-from app.models.chat import ChatAdapter, ChatError, ChatMessage, get_chat_adapter
+from app.models.chat import ChatAdapter, ChatError, ChatMessage, get_chat_adapter, image_part
 from app.retrieval.service import search
 from app.retrieval.types import MetadataFilter
 from app.study_sets.service import resolve_scope
@@ -158,16 +159,29 @@ def answer(
 
         messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)]
         messages += _load_history(session, convo.id)
-        messages.append(
-            ChatMessage(
-                role="user", content=build_user_prompt(question, context.text)
-            )
+        text_prompt = build_user_prompt(question, context.text)
+        visual_message, image_count = (
+            _message_with_source_pages(text_prompt, context.sources, settings)
+            if settings.generation.include_page_images
+            else (ChatMessage(role="user", content=text_prompt), 0)
         )
+        messages.append(visual_message)
 
         try:
-            response = adapter.generate(
-                messages, temperature=settings.generation.temperature
-            )
+            vision_warning = None
+            try:
+                response = adapter.generate(
+                    messages, temperature=settings.generation.temperature
+                )
+            except ChatError:
+                if not image_count:
+                    raise
+                # A configured text-only model can still answer from the indexed text.
+                messages[-1] = ChatMessage(role="user", content=text_prompt)
+                response = adapter.generate(
+                    messages, temperature=settings.generation.temperature
+                )
+                vision_warning = "Visual model unavailable; answered from text only."
             answer_text = response.content.strip()
             model_name = response.model
             check = validate_answer(
@@ -176,7 +190,7 @@ def answer(
                 require_citations=settings.generation.require_citations,
             )
             citations = check.valid_citations
-            warnings = check.warnings
+            warnings = check.warnings + ([vision_warning] if vision_warning else [])
         except ChatError as exc:
             # Model down: still return the sources we retrieved, with a note.
             logger.warning("Chat model unavailable: %s", exc)
@@ -212,6 +226,36 @@ def answer(
         )
 
     return result
+
+
+def _message_with_source_pages(
+    text_prompt: str, sources: dict, settings: Settings
+) -> tuple[ChatMessage, int]:
+    parts: list[dict] = [{"type": "text", "text": text_prompt}]
+    seen: set[tuple[int, int]] = set()
+    count = 0
+    for marker, hit in sources.items():
+        if hit.page_number is None or Path(hit.path).suffix.lower() not in {
+            ".pdf", ".pptx", ".ppt"
+        }:
+            continue
+        key = (hit.document_id, hit.page_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            png = render_page(hit.path, hit.page_number, settings)
+        except Exception as exc:
+            logger.warning("Could not render cited page %s: %s", marker, exc)
+            continue
+        parts.append({"type": "text", "text": f"Original page image for [{marker}]:"})
+        parts.append(image_part(png))
+        count += 1
+        if count == 2:
+            break
+    if not count:
+        return ChatMessage(role="user", content=text_prompt), 0
+    return ChatMessage(role="user", content=parts), count
 
 
 def _context_budget(settings: Settings) -> int:

@@ -25,6 +25,11 @@ logger = get_logger("sync")
 # robocopy exit codes 0-7 indicate success (8+ are real errors).
 _ROBOCOPY_OK_MAX = 7
 
+# Machine-specific and iCloud placeholder files should not be mirrored. In
+# particular, iCloud renames Obsidian's workspace.json on arrival, which would
+# otherwise make every open/close sync repeat the same copy forever.
+_DEFAULT_EXCLUDE_FILES = ["workspace*.json", ".DS_Store", "desktop.ini", "*.icloud"]
+
 
 class SyncError(RuntimeError):
     pass
@@ -66,6 +71,7 @@ def _build_command(
     cmd += ["/R:2", "/W:2", "/NFL", "/NDL", "/NP", "/NJH", "/NJS"]
     for d in exclude_dirs:
         cmd += ["/XD", str(source / d), d]
+    cmd += ["/XF", *_DEFAULT_EXCLUDE_FILES]
     return cmd
 
 

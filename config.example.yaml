@@ -41,6 +41,8 @@ retrieval:
 generation:
   temperature: 0.1
   require_citations: true
+  # Enable when task_models.chat selects a vision-capable model.
+  include_page_images: false
 sync:
   enabled: false
   icloud_root:
@@ -68,6 +70,11 @@ embeddings:
 task_models:
   chat:
     provider:
+    model:
+    base_url:
+  # Set this to a vision-capable local model before running index_visual_pages.
+  visual_pages:
+    provider: lmstudio
     model:
     base_url:
   deep_ask:

@@ -627,6 +627,10 @@ export function NotesPage({
 
   // Load the active note (skip empty "new tab" placeholders).
   useEffect(() => {
+    // Anything typed but not yet autosaved must survive a note/tab switch.
+    if (note && draft !== note.content) {
+      void api.vaultSaveNote(note.path, draft).catch(() => undefined);
+    }
     if (!active || active.startsWith("new:")) {
       setNote(null);
       setInlineTranslation(null);
@@ -1188,7 +1192,8 @@ export function NotesPage({
       await api.vaultSaveNote(note.path, content);
       const fresh = await api.vaultNote(note.path);
       setNote(fresh);
-      setDraft(fresh.content);
+      // Keep typing that landed while the save was in flight.
+      setDraft((current) => (current === content ? fresh.content : current));
       if (closeAfter) setViewMode("read");
     } catch (e) {
       setError((e as Error).message);
@@ -1196,6 +1201,57 @@ export function NotesPage({
       setSaving(false);
     }
   };
+
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const dirty = !!note && editing && draft !== note.content;
+
+  // Autosave: after ~1.2s of quiet typing the note saves itself (Obsidian-style).
+  useEffect(() => {
+    if (!dirty || saving) return;
+    const timer = window.setTimeout(() => void saveRef.current(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [dirty, draft, editing, note, saving]);
+
+  // Don't let a window close/refresh silently drop unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  // Ctrl+S anywhere on the page (the editors handle their own shortcut).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
+      const el = event.target as HTMLElement | null;
+      if (el?.closest(".cm-editor, .rich-editor-shell")) return;
+      if (!dirty) return;
+      event.preventDefault();
+      void saveRef.current(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dirty]);
+
+  // Last-resort flush: save pending edits if the page unmounts mid-edit.
+  const noteRef = useRef(note);
+  const draftRef = useRef(draft);
+  noteRef.current = note;
+  draftRef.current = draft;
+  useEffect(
+    () => () => {
+      const last = noteRef.current;
+      if (last && draftRef.current !== last.content) {
+        void api.vaultSaveNote(last.path, draftRef.current).catch(() => undefined);
+      }
+    },
+    [],
+  );
 
   const openBookmark = (bookmark: string) => {
     const [target, heading] = bookmark.split("#", 2);

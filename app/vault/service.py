@@ -8,6 +8,8 @@ confined to text notes inside the vault.
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import os
 import re
 import shutil
@@ -21,6 +23,7 @@ import frontmatter
 
 from app.config.settings import Settings, get_settings
 from app.logging_config import get_logger
+from app.sync.gate import vault_write_gate
 from app.security.paths import (
     PathSecurityError,
     assert_readable,
@@ -43,6 +46,32 @@ _BACKUP_DIR = "StudyCopilot/_backups"
 # note doesn't re-read every other note. Invalidated by a cheap stat signature.
 _GRAPH_LOCK = threading.Lock()
 _GRAPH_CACHE: dict = {"root": None, "sig": None, "index": {}, "outlinks": {}}
+
+# Per-note cache shared with app.vault.links: rel -> (mtime_ns, size, text, links).
+# ``text`` stays None until a mention scan asks for it; ``links`` are persisted to
+# disk so a fresh process resolves backlinks without re-reading the whole vault
+# (a cold read of every note costs ~20s on a large vault).
+_NOTES_LOCK = threading.Lock()
+_READ_LOCK = threading.Lock()  # one disk-reading build at a time
+_NOTES_CACHE: dict = {"root": None, "entries": {}}
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+
+
+def _link_cache_path(root: str) -> Path:
+    """Per-vault cache file, so distinct vaults can't clobber each other."""
+    digest = hashlib.sha1(root.encode("utf-8")).hexdigest()[:12]
+    return _DATA_DIR / f"vault_note_links_{digest}.json"
+
+
+def _gated(fn):
+    """Serialise vault mutations against in-flight sync runs (app.sync.gate)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with vault_write_gate():
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _vault_root(settings: Settings) -> Path:
@@ -167,31 +196,133 @@ def list_tree(settings: Settings | None = None) -> dict:
     return to_list(root)
 
 
-def _note_index(settings: Settings) -> dict[str, str]:
-    """Map lowercased note name (stem) -> relpath, for link resolution."""
-    index: dict[str, str] = {}
-    for _, rel in _iter_notes(settings):
-        stem = Path(rel).stem.lower()
-        index.setdefault(stem, rel)
-    return index
+def _load_link_cache(root: str) -> dict[str, tuple[int, int, list[str]]]:
+    """Persisted ``rel -> (mtime_ns, size, links)`` for one vault root."""
+    try:
+        raw = json.loads(_link_cache_path(root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if raw.get("root") != root:
+        return {}
+    out: dict[str, tuple[int, int, list[str]]] = {}
+    for rel, item in raw.get("entries", {}).items():
+        if isinstance(item, list) and len(item) == 3:
+            mtime, size, links = item
+            out[rel] = (int(mtime), int(size), [str(x) for x in links])
+    return out
 
 
-def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]]]:
-    """Return ``(name_index, outgoing_links_per_note)`` for the whole vault.
+def _save_link_cache(root: str, entries: dict) -> None:
+    payload = {
+        "root": root,
+        "entries": {
+            rel: [mtime, size, links]
+            for rel, (mtime, size, _text, links) in entries.items()
+            if links is not None
+        },
+    }
+    path = _link_cache_path(root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        logger.warning("Could not persist note link cache at %s", path)
 
-    Cached and invalidated by a stat signature (path + mtime + size of every
-    note), so repeat opens do a stat-only walk instead of reading every note's
-    content each time.
+
+def _note_entries(
+    settings: Settings, *, need_text: bool
+) -> dict[str, tuple[int, int, str | None, list[str] | None]]:
+    """Cached text/links per note; only re-reads files whose (mtime, size) moved.
+
+    ``need_text`` also materialises each note's full text (used by the mention
+    scans in app.vault.links). Links alone never force a read when the persisted
+    link cache already covers the file.
     """
     root = str(_vault_root(settings))
-    entries: list[tuple[str, Path, int, int]] = []
+    scanned: list[tuple[str, Path, int, int]] = []
     for path, rel in _iter_notes(settings):
         try:
             stat = path.stat()
         except OSError:
             continue
-        entries.append((rel, path, stat.st_mtime_ns, stat.st_size))
-    signature = tuple(sorted((rel, mtime, size) for rel, _p, mtime, size in entries))
+        scanned.append((rel, path, stat.st_mtime_ns, stat.st_size))
+
+    with _NOTES_LOCK:
+        if _NOTES_CACHE["root"] != root:
+            seeded = {
+                rel: (mtime, size, None, links)
+                for rel, (mtime, size, links) in _load_link_cache(root).items()
+            }
+            _NOTES_CACHE.update(root=root, entries=seeded)
+        snapshot = dict(_NOTES_CACHE["entries"])
+
+    def usable(
+        item: tuple[int, int, str | None, list[str] | None] | None,
+        mtime_ns: int,
+        size: int,
+    ) -> bool:
+        return (
+            item is not None
+            and item[0] == mtime_ns
+            and item[1] == size
+            and item[3] is not None
+            and (not need_text or item[2] is not None)
+        )
+
+    pending = [e for e in scanned if not usable(snapshot.get(e[0]), e[2], e[3])]
+    if pending:
+        with _READ_LOCK:  # concurrent callers share one pass over the disk
+            with _NOTES_LOCK:
+                snapshot = dict(_NOTES_CACHE["entries"])
+            changed = False
+            for rel, path, mtime_ns, size in pending:
+                if usable(snapshot.get(rel), mtime_ns, size):
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                snapshot[rel] = (mtime_ns, size, text, extract_links(text))
+                changed = True
+            if changed:
+                live = {rel: snapshot[rel] for rel, _p, _m, _s in scanned if rel in snapshot}
+                with _NOTES_LOCK:
+                    _NOTES_CACHE["entries"].update(
+                        {rel: live[rel] for rel in live}
+                    )
+                _save_link_cache(root, live)
+
+    return {
+        rel: snapshot[rel] for rel, _p, _m, _s in scanned if rel in snapshot
+    }
+
+
+def note_texts(settings: Settings | None = None) -> dict[str, str]:
+    """Full text of every note in the vault, cached by (mtime, size)."""
+    settings = settings or get_settings()
+    entries = _note_entries(settings, need_text=True)
+    return {rel: item[2] for rel, item in entries.items() if item[2] is not None}
+
+
+def warm_note_cache(settings: Settings | None = None) -> None:
+    """Fill the note cache in the background so the first open is instant."""
+    try:
+        note_texts(settings)
+    except Exception:  # noqa: BLE001 - warming must never kill the caller's thread
+        logger.exception("Warming the note cache failed")
+
+
+def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Return ``(name_index, outgoing_links_per_note)`` for the whole vault.
+
+    Backed by the shared per-note cache (and its on-disk link snapshot), so
+    repeat opens do a stat-only walk instead of reading every note's content.
+    """
+    root = str(_vault_root(settings))
+    entries = _note_entries(settings, need_text=False)
+    signature = tuple(
+        sorted((rel, item[0], item[1]) for rel, item in entries.items())
+    )
 
     with _GRAPH_LOCK:
         if _GRAPH_CACHE["root"] == root and _GRAPH_CACHE["sig"] == signature:
@@ -199,14 +330,9 @@ def _link_graph(settings: Settings) -> tuple[dict[str, str], dict[str, list[str]
 
     index: dict[str, str] = {}
     outlinks: dict[str, list[str]] = {}
-    for rel, path, _mtime, _size in entries:
+    for rel, item in entries.items():
         index.setdefault(Path(rel).stem.lower(), rel)
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            outlinks[rel] = []
-            continue
-        outlinks[rel] = extract_links(text)
+        outlinks[rel] = item[3] or []
 
     with _GRAPH_LOCK:
         _GRAPH_CACHE.update(root=root, sig=signature, index=index, outlinks=outlinks)
@@ -270,6 +396,7 @@ def _prune_backups(backup_dir: Path, note_name: str, settings: Settings) -> None
             logger.warning("Could not prune old backup %s", stale)
 
 
+@_gated
 def write_note(
     relpath: str, content: str, settings: Settings | None = None
 ) -> dict:
@@ -294,6 +421,7 @@ def write_note(
     return {"path": relpath, "written": True, "backup": backup_path}
 
 
+@_gated
 def create_folder(relpath: str, settings: Settings | None = None) -> dict:
     settings = settings or get_settings()
     if not settings.workspace.allow_edit:
@@ -337,6 +465,7 @@ def _rewrite_links_to(from_rel: str, to_rel: str, settings: Settings) -> int:
     return changed
 
 
+@_gated
 def rename_note(
     from_rel: str, to_rel: str, settings: Settings | None = None
 ) -> dict:
@@ -366,6 +495,7 @@ def rename_note(
     return {"from": from_rel, "to": new_rel, "links_updated": links_updated}
 
 
+@_gated
 def move_item(
     from_rel: str, to_folder: str, settings: Settings | None = None
 ) -> dict:
@@ -401,6 +531,7 @@ def move_item(
     }
 
 
+@_gated
 def import_files(
     source_paths: list[str],
     target_folder: str = "",
@@ -448,6 +579,7 @@ def import_files(
     return {"imported": imported, "count": len(imported)}
 
 
+@_gated
 def copy_note(
     from_rel: str, to_rel: str, settings: Settings | None = None
 ) -> dict:
@@ -466,6 +598,7 @@ def copy_note(
     return {"from": from_rel, "to": new_rel}
 
 
+@_gated
 def merge_notes(
     target_rel: str,
     source_rel: str,
@@ -491,6 +624,7 @@ def merge_notes(
     return {"target": target_rel, "source": source_rel, "deleted": deleted, **result}
 
 
+@_gated
 def set_note_property(
     relpath: str, key: str, value: str, settings: Settings | None = None
 ) -> dict:
@@ -535,6 +669,7 @@ def list_versions(relpath: str, settings: Settings | None = None) -> list[dict]:
     return versions
 
 
+@_gated
 def restore_version(
     relpath: str, version_id: str, settings: Settings | None = None
 ) -> dict:
@@ -556,6 +691,7 @@ def restore_version(
     )
 
 
+@_gated
 def delete_note(relpath: str, settings: Settings | None = None) -> dict:
     """Delete a note or folder reversibly into the vault backup area."""
     settings = settings or get_settings()
@@ -647,22 +783,17 @@ def export_pdf(relpath: str, settings: Settings | None = None) -> dict:
 
 def build_graph(settings: Settings | None = None) -> dict:
     settings = settings or get_settings()
-    index = _note_index(settings)
+    index, outlinks = _link_graph(settings)
 
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
-    for p, rel in _iter_notes(settings):
-        node_id = rel
+    for rel, links in outlinks.items():
         folder = rel.split("/")[0] if "/" in rel else ""
         nodes.setdefault(
-            node_id,
-            {"id": node_id, "title": Path(rel).stem, "folder": folder, "degree": 0},
+            rel,
+            {"id": rel, "title": Path(rel).stem, "folder": folder, "degree": 0},
         )
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for link in extract_links(text):
+        for link in links:
             target_rel = index.get(link.lower())
             if target_rel and target_rel != rel:
                 edges.append({"source": rel, "target": target_rel})

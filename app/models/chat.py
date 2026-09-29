@@ -13,6 +13,7 @@ of the codebase:
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 from dataclasses import dataclass
@@ -26,10 +27,23 @@ from app.config.settings import Settings
 @dataclass
 class ChatMessage:
     role: str  # "system" | "user" | "assistant"
-    content: str
+    content: str | list[dict]
 
     def as_dict(self) -> dict:
         return {"role": self.role, "content": self.content}
+
+
+def image_message(text: str, png: bytes) -> ChatMessage:
+    """Use OpenAI-compatible image parts; cloud adapters translate as needed."""
+    return ChatMessage(
+        role="user",
+        content=[{"type": "text", "text": text}, image_part(png)],
+    )
+
+
+def image_part(png: bytes) -> dict:
+    encoded = base64.b64encode(png).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
 
 
 @dataclass
@@ -175,6 +189,25 @@ _CLAUDE_NO_TEMPERATURE_PREFIXES = (
 )
 
 
+def _anthropic_content(content: str | list[dict]) -> str | list[dict]:
+    if isinstance(content, str):
+        return content
+    parts: list[dict] = []
+    for part in content:
+        if part.get("type") == "text":
+            parts.append(part)
+        elif part.get("type") == "image_url":
+            url = part["image_url"]["url"]
+            prefix = "data:image/png;base64,"
+            if not url.startswith(prefix):
+                raise ChatError("Only inline PNG images are supported")
+            parts.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": url[len(prefix):]},
+            })
+    return parts
+
+
 class AnthropicChatAdapter:
     """Cloud Claude via the official ``anthropic`` SDK.
 
@@ -232,8 +265,13 @@ class AnthropicChatAdapter:
         max_tokens: int | None = None,
     ) -> ChatResponse:
         client = self._ensure_client()
-        system = "\n\n".join(m.content for m in messages if m.role == "system")
-        convo = [m.as_dict() for m in messages if m.role != "system"]
+        system = "\n\n".join(
+            m.content for m in messages if m.role == "system" and isinstance(m.content, str)
+        )
+        convo = [
+            {"role": m.role, "content": _anthropic_content(m.content)}
+            for m in messages if m.role != "system"
+        ]
 
         kwargs: dict = {
             "model": self.model_name,
@@ -280,7 +318,11 @@ class EchoChatAdapter:
         temperature: float = 0.1,
         max_tokens: int | None = None,
     ) -> ChatResponse:
-        joined = "\n".join(m.content for m in messages if m.role == "user")
+        joined = "\n".join(
+            m.content if isinstance(m.content, str)
+            else " ".join(part.get("text", "") for part in m.content if part.get("type") == "text")
+            for m in messages if m.role == "user"
+        )
         ids = self._SID_RE.findall(joined)
         if ids:
             content = (
