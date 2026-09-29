@@ -44,8 +44,32 @@ import type {
 // Calls go through the Vite proxy (/api -> backend). Override with VITE_API_BASE.
 // `npm run build:web` (mode "web", used by the one-click launcher) is served by
 // the backend itself, so API calls go to the same origin with no prefix.
-const BASE =
+let BASE =
   import.meta.env.MODE === "web" ? "" : (import.meta.env.VITE_API_BASE ?? "/api");
+
+/** Point API calls at another backend (the desktop app picks its port at launch). */
+export function setApiBase(url: string) {
+  BASE = url.replace(/\/+$/, "");
+}
+
+export function apiBase() {
+  return BASE;
+}
+
+/**
+ * In the packaged desktop app, ask it which port its backend is on (the port
+ * is chosen at launch so it never collides with other local servers).
+ */
+export async function initApiBase(): Promise<void> {
+  if (!("__TAURI_INTERNALS__" in window)) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const url = await invoke<string | null>("backend_url");
+    if (url) setApiBase(url);
+  } catch {
+    /* dev build or older shell: keep the build-time default */
+  }
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

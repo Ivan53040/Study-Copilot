@@ -6,6 +6,7 @@ import json
 import socket
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from app.config.settings import Settings, get_settings
 from app.sync.gate import VAULT_LOCK
@@ -13,9 +14,20 @@ from app.sync.icloud_sync import sync_to_icloud
 from app.sync.twoway import two_way_sync
 
 
-# Ports a running Study Copilot backend may use: the packaged desktop app
-# (8765), scripts/restart_dev.cmd (8766) and the one-click launcher (8767).
-APP_PORTS = (8765, 8766, 8767)
+# Ports Study Copilot backends use: 8765 (default / older desktop builds),
+# 8766 (dev script), 8767 (one-click launcher), 8768 (desktop app).
+APP_PORTS = (8765, 8766, 8767, 8768)
+# The desktop app records its backend port here (it may pick another port
+# when 8768 is taken) and removes the file when it closes.
+_PORT_FILE = Path(__file__).resolve().parents[2] / "data" / "desktop-port.txt"
+
+
+def _registered_ports() -> tuple[int, ...]:
+    try:
+        port = int(_PORT_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return ()
+    return (port,) if 0 < port < 65536 else ()
 
 
 def _study_copilot_on(port: int, host: str, timeout: float) -> bool:
@@ -50,7 +62,11 @@ def desktop_app_running(
     other program (one that answers HTTP but is not Study Copilot) does not
     count, so it can no longer block syncing forever.
     """
-    ports = (port,) if port is not None else APP_PORTS
+    ports = (
+        (port,)
+        if port is not None
+        else tuple(dict.fromkeys(APP_PORTS + _registered_ports()))
+    )
     return any(_study_copilot_on(p, host, timeout) for p in ports)
 
 

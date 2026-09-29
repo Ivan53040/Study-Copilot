@@ -126,3 +126,26 @@ def test_desktop_app_running_recognises_study_copilot_only():
     finally:
         other.shutdown()
         ours.shutdown()
+
+
+def test_desktop_app_running_checks_the_registered_desktop_port(tmp_path, monkeypatch):
+    from app.sync import service
+
+    checked: list[int] = []
+    monkeypatch.setattr(service, "_study_copilot_on", lambda port, host, timeout: checked.append(port) or False)
+    port_file = tmp_path / "desktop-port.txt"
+    monkeypatch.setattr(service, "_PORT_FILE", port_file)
+
+    assert desktop_app_running() is False
+    assert checked == list(service.APP_PORTS)
+    assert 8768 in service.APP_PORTS
+
+    checked.clear()
+    port_file.write_text("51234", encoding="utf-8")
+    desktop_app_running()
+    assert checked == [*service.APP_PORTS, 51234]
+
+    checked.clear()
+    port_file.write_text("not a port", encoding="utf-8")
+    desktop_app_running()
+    assert checked == list(service.APP_PORTS)

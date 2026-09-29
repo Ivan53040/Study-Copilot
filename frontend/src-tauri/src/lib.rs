@@ -1,18 +1,53 @@
-use std::fs::File;
+#[cfg(not(debug_assertions))]
+use std::fs::{self, File};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(not(debug_assertions))]
+use std::process::{Command, Stdio};
+use std::process::Child;
 use std::sync::Mutex;
 use tauri::Manager;
 
 // Holds the spawned backend process so we can stop it when the app closes.
 struct Backend(Mutex<Option<Child>>);
 
-const BACKEND_PORT: &str = "8765";
+// The URL of the backend this app started (None in dev, where the Vite proxy
+// reaches a manually started backend). The page asks for it at startup.
+struct BackendUrl(Option<String>);
 
+// Preferred backend port. 8765 is often taken by other local model servers,
+// and 8766/8767 are used by the dev and one-click launchers, so the desktop
+// app defaults to 8768 and falls back to any free port when that is busy.
+// Set STUDY_COPILOT_PORT to force a specific port.
+const DEFAULT_PORT: u16 = 8768;
+
+fn port_is_free(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn choose_port() -> u16 {
+    if let Some(port) = std::env::var("STUDY_COPILOT_PORT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port != 0)
+    {
+        return port;
+    }
+    if port_is_free(DEFAULT_PORT) {
+        return DEFAULT_PORT;
+    }
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .unwrap_or(DEFAULT_PORT)
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
 fn is_project_dir(path: &Path) -> bool {
     path.join(".venv/Scripts/pythonw.exe").is_file() && path.join("app/main.py").is_file()
 }
 
+#[cfg_attr(debug_assertions, allow(dead_code))]
 fn project_dir() -> Option<PathBuf> {
     std::env::var_os("STUDY_COPILOT_PROJECT_DIR")
         .map(PathBuf::from)
@@ -27,22 +62,31 @@ fn project_dir() -> Option<PathBuf> {
         })
 }
 
+// Where the running backend's port is recorded, so the background sync task
+// can tell the app is open even when it had to use a non-default port.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn port_file(project_dir: &Path) -> PathBuf {
+    project_dir.join("data/desktop-port.txt")
+}
+
 // In a release build the app starts the Python backend itself (single launch).
 // In dev we rely on the manually-run backend, so we don't spawn a second one.
 #[cfg(not(debug_assertions))]
-fn spawn_backend() -> Option<Child> {
+fn spawn_backend(port: u16) -> Option<Child> {
     let project_dir = project_dir()?;
     let python = project_dir.join(".venv/Scripts/pythonw.exe");
+    let port_arg = port.to_string();
     let mut cmd = Command::new(python);
     cmd.args([
         "-m", "uvicorn", "app.main:app",
-        "--host", "127.0.0.1", "--port", BACKEND_PORT, "--log-level", "warning",
+        "--host", "127.0.0.1", "--port", port_arg.as_str(), "--log-level", "warning",
     ])
     .current_dir(&project_dir)
     .stdin(Stdio::null());
 
     // A detached GUI launch has no valid stdio; if the child inherits those
     // handles its logging crashes. Redirect to a log file (or null) instead.
+    let _ = fs::create_dir_all(project_dir.join("data"));
     match File::create(project_dir.join("data/desktop-backend.log")) {
         Ok(f) => {
             let err = f.try_clone().ok();
@@ -53,11 +97,13 @@ fn spawn_backend() -> Option<Child> {
             cmd.stdout(Stdio::null()).stderr(Stdio::null());
         }
     }
-    cmd.spawn().ok()
+    let child = cmd.spawn().ok()?;
+    let _ = fs::write(port_file(&project_dir), &port_arg);
+    Some(child)
 }
 
 #[cfg(debug_assertions)]
-fn spawn_backend() -> Option<Child> {
+fn spawn_backend(_port: u16) -> Option<Child> {
     None
 }
 
@@ -67,6 +113,7 @@ fn spawn_backend() -> Option<Child> {
 #[cfg(not(debug_assertions))]
 fn spawn_sync_on_close() {
     let Some(project_dir) = project_dir() else { return };
+    let _ = fs::remove_file(port_file(&project_dir));
     let python = project_dir.join(".venv/Scripts/pythonw.exe");
     let script = project_dir.join("scripts/sync_standalone.py");
     let _ = Command::new(python)
@@ -82,13 +129,24 @@ fn spawn_sync_on_close() {
 #[cfg(debug_assertions)]
 fn spawn_sync_on_close() {}
 
+#[tauri::command]
+fn backend_url(state: tauri::State<'_, BackendUrl>) -> Option<String> {
+    state.0.clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let port = choose_port();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            let child = spawn_backend();
+        .invoke_handler(tauri::generate_handler![backend_url])
+        .setup(move |app| {
+            let child = spawn_backend(port);
+            let url = child
+                .as_ref()
+                .map(|_| format!("http://127.0.0.1:{port}"));
+            app.manage(BackendUrl(url));
             app.manage(Backend(Mutex::new(child)));
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -107,6 +165,7 @@ pub fn run() {
                     if let Ok(mut guard) = state.0.lock() {
                         if let Some(child) = guard.as_mut() {
                             let _ = child.kill();
+                            let _ = child.wait();
                         }
                     }
                 }

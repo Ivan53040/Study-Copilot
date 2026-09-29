@@ -229,10 +229,11 @@ from then on.
 - Logs: `data/launcher.log`, `data/launcher-backend.log`,
   `data/launcher-build.log`.
 
-The sync scripts treat any Study Copilot backend on ports 8765 (desktop app),
-8766 (`scripts\restart_dev.cmd`) or 8767 (launcher) as "app open" and wait.
-They check that the port really answers as Study Copilot, so another program
-on one of those ports no longer blocks syncing.
+The sync scripts treat any Study Copilot backend on ports 8765 (older desktop
+builds), 8766 (`scripts\restart_dev.cmd`), 8767 (launcher) or 8768 (desktop
+app, or the port it recorded in `data/desktop-port.txt`) as "app open" and
+wait. They check that the port really answers as Study Copilot, so another
+program on one of those ports no longer blocks syncing.
 
 ### Desktop app (Tauri)
 
@@ -243,6 +244,10 @@ itself and opens a native window.
 Toolchain (one-time): **Rust**, the **VS C++ Build Tools** (Desktop C++ workload),
 and the **WebView2** runtime.
 
+To build the installer, double-click **`scripts\build_desktop.cmd`** (it runs
+`npm run tauri build` and opens the folder with the new
+`Study Copilot_<version>_x64-setup.exe`). Or by hand:
+
 ```bash
 cd frontend
 npm run tauri dev     # dev window (also run the backend separately)
@@ -252,9 +257,12 @@ npm run tauri build   # release: builds src-tauri/target/release/app.exe
 - In **dev** the shell does *not* start the backend (run `python -m app.main`
   yourself); in a **release** build it spawns `pythonw -m uvicorn` on launch and
   stops it on exit (see [`src-tauri/src/lib.rs`](frontend/src-tauri/src/lib.rs)).
-- The release frontend calls the backend directly via `VITE_API_BASE`
-  (`frontend/.env.production`, copied from `frontend/.env.example`); the API
-  client retries while the backend boots.
+- The backend port is chosen at launch: `STUDY_COPILOT_PORT` if set, else
+  **8768**, else any free port. The page asks the shell for it
+  (`backend_url` command) before it renders, so the app never talks to some
+  other program that happens to hold a port (8765 is often a local model
+  server). `VITE_API_BASE` in `frontend/.env.production` is only a fallback.
+  The API client retries while the backend boots.
 - The backend path is currently baked for this machine (personal build). For a
   portable installer, package the backend with PyInstaller
   ([`scripts/desktop_backend.py`](scripts/desktop_backend.py)) and ship it as a
