@@ -682,3 +682,5 @@ hr { border: none; border-top: 1px solid var(--border); }
 .page-frame .row > input.grow { flex: 1 1 300px; }
 .notes-keepalive { height: 100%; }
 .notes-keepalive[hidden] { display: none; }
+.page-loading { height: 100%; min-height: 200px; display: grid; place-items: center; color: var(--accent); }
+.page-loading .brand-mark { animation: spark 1.6s var(--ease) infinite; opacity: 0.8; }

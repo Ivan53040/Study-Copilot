@@ -1,22 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { AppSettings, ConversationSummary, Health } from "./types";
 import { BrandMark, Icon } from "./icons";
 import { useDismiss } from "./components";
 import { ChatPage } from "./pages/Chat";
-import { SearchPage } from "./pages/Search";
-import { GeneratePage } from "./pages/Generate";
-import { NotesPage } from "./pages/Notes";
-import { WikiPage } from "./pages/Wiki";
-import { VoiceNotesPage } from "./pages/VoiceNotes";
-import { LibraryPage } from "./pages/Library";
-import { LecturesPage } from "./pages/Lectures";
-import { QuizPage } from "./pages/Quiz";
-import { ProgressPage } from "./pages/Progress";
-import { PlanPage } from "./pages/Plan";
-import { PastPapersPage } from "./pages/PastPapers";
-import { SettingsPage } from "./pages/Settings";
+import { loadMarkdownExtras, onMarkdownExtrasReady } from "./markdown";
 import { type Appearance, loadAppearance } from "./theme";
+
+// Chat (the home screen) ships in the main bundle; every other page is its own
+// chunk, loaded on first visit. The notes workspace (the heaviest: editor,
+// graph) is prefetched once the app is idle so opening it stays instant.
+const loadNotes = () => import("./pages/Notes");
+const NotesPage = lazy(() => loadNotes().then((m) => ({ default: m.NotesPage })));
+const SearchPage = lazy(() => import("./pages/Search").then((m) => ({ default: m.SearchPage })));
+const GeneratePage = lazy(() => import("./pages/Generate").then((m) => ({ default: m.GeneratePage })));
+const WikiPage = lazy(() => import("./pages/Wiki").then((m) => ({ default: m.WikiPage })));
+const VoiceNotesPage = lazy(() => import("./pages/VoiceNotes").then((m) => ({ default: m.VoiceNotesPage })));
+const LibraryPage = lazy(() => import("./pages/Library").then((m) => ({ default: m.LibraryPage })));
+const LecturesPage = lazy(() => import("./pages/Lectures").then((m) => ({ default: m.LecturesPage })));
+const QuizPage = lazy(() => import("./pages/Quiz").then((m) => ({ default: m.QuizPage })));
+const ProgressPage = lazy(() => import("./pages/Progress").then((m) => ({ default: m.ProgressPage })));
+const PlanPage = lazy(() => import("./pages/Plan").then((m) => ({ default: m.PlanPage })));
+const PastPapersPage = lazy(() => import("./pages/PastPapers").then((m) => ({ default: m.PastPapersPage })));
+const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
+
+function PageLoading() {
+  return (
+    <div className="page-loading" aria-busy="true">
+      <BrandMark size={22} />
+    </div>
+  );
+}
 
 type Tab =
   | "chat"
@@ -427,6 +441,24 @@ export function App() {
     };
   }, []);
 
+  // Warm the notes workspace chunk once the app is idle.
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadNotes().catch(() => {}), 1500);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // Math + code highlighting arrive a moment after start-up; re-render once
+  // they do so anything already on screen picks them up.
+  const [, setMarkdownExtras] = useState(0);
+  useEffect(() => {
+    const unsubscribe = onMarkdownExtrasReady(() => setMarkdownExtras((value) => value + 1));
+    const timer = window.setTimeout(() => void loadMarkdownExtras().catch(() => {}), 300);
+    return () => {
+      unsubscribe();
+      window.clearTimeout(timer);
+    };
+  }, []);
+
   // The packaged backend can take a while on first launch: refetch once online.
   useEffect(() => {
     if (!online) return;
@@ -508,7 +540,9 @@ export function App() {
     return (
       <div className="detached-shell">
         <main className="main detached-main">
-          <NotesPage path={notePath} tocOpen={false} treeOpen={false} detached />
+          <Suspense fallback={<PageLoading />}>
+            <NotesPage path={notePath} tocOpen={false} treeOpen={false} detached />
+          </Suspense>
         </main>
       </div>
     );
@@ -766,9 +800,12 @@ export function App() {
             )}
             {notesMounted && (
               <div className="notes-keepalive" hidden={tab !== "notes"}>
-                <NotesPage key={vaultRevision} path={notePath} tocOpen={tocOpen} treeOpen={treeOpen} />
+                <Suspense fallback={<PageLoading />}>
+                  <NotesPage key={vaultRevision} path={notePath} tocOpen={tocOpen} treeOpen={treeOpen} />
+                </Suspense>
               </div>
             )}
+            <Suspense fallback={<PageLoading />}>
             {tab === "lectures" && <LecturesPage />}
             {tab === "voice" && <VoiceNotesPage onOpenNote={openNote} />}
             {tab === "wiki" && <WikiPage onOpenNote={openNote} />}
@@ -796,6 +833,7 @@ export function App() {
                 )}
               </div>
             )}
+            </Suspense>
           </main>
 
           {tab !== "chat" && (

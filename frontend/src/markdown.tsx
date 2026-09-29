@@ -5,16 +5,61 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkCallouts from "remark-obsidian-callout";
-import rehypeHighlight from "rehype-highlight";
-import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import mermaid from "mermaid";
-import "katex/dist/katex.min.css";
 
-// Mermaid themes follow the app's colour mode (re-initialised before each render).
-// Initialise once at load too, so Mermaid never auto-runs on window load.
-mermaid.initialize({ startOnLoad: false });
-function initMermaid() {
+// KaTeX + syntax highlighting load in the background (see markdownExtras.ts).
+// Until then math and code render as plain text; subscribers (the app shell)
+// re-render once they arrive.
+type Extras = typeof import("./markdownExtras");
+let extras: Extras | null = null;
+let extrasLoad: Promise<Extras> | null = null;
+const extrasListeners = new Set<() => void>();
+
+export function loadMarkdownExtras(): Promise<Extras> {
+  extrasLoad ??= import("./markdownExtras").then((module) => {
+    extras = module;
+    extrasListeners.forEach((listener) => listener());
+    return module;
+  });
+  return extrasLoad;
+}
+
+export function onMarkdownExtrasReady(listener: () => void): () => void {
+  if (extras) {
+    listener();
+    return () => {};
+  }
+  extrasListeners.add(listener);
+  return () => {
+    extrasListeners.delete(listener);
+  };
+}
+
+function lazyRehype(name: "rehypeKatex" | "rehypeHighlight") {
+  return function attacher(this: unknown, options?: unknown) {
+    return (tree: unknown, file: unknown) => {
+      if (!extras) {
+        void loadMarkdownExtras().catch(() => {});
+        return;
+      }
+      const transform = (extras[name] as any).call(this, options);
+      return transform?.(tree, file);
+    };
+  };
+}
+
+// Mermaid is large, so it loads only when a note or answer contains a diagram.
+// Its theme follows the app's colour mode (re-initialised before each render).
+type MermaidApi = typeof import("mermaid").default;
+let mermaidLoad: Promise<MermaidApi> | null = null;
+function loadMermaid(): Promise<MermaidApi> {
+  mermaidLoad ??= import("mermaid").then(({ default: mermaid }) => {
+    mermaid.initialize({ startOnLoad: false });
+    return mermaid;
+  });
+  return mermaidLoad;
+}
+function initMermaid(mermaid: MermaidApi) {
   mermaid.initialize({
     startOnLoad: false,
     theme: document.documentElement.dataset.theme === "dark" ? "dark" : "neutral",
@@ -37,11 +82,14 @@ function Mermaid({ code }: { code: string }) {
   useEffect(() => {
     let alive = true;
     const id = "mmd-" + Math.random().toString(36).slice(2);
-    initMermaid();
-    mermaid
-      .render(id, code)
-      .then(({ svg }) => {
-        if (alive && ref.current) ref.current.innerHTML = svg;
+    loadMermaid()
+      .then((mermaid) => {
+        if (!alive) return null;
+        initMermaid(mermaid);
+        return mermaid.render(id, code);
+      })
+      .then((result) => {
+        if (alive && result && ref.current) ref.current.innerHTML = result.svg;
       })
       .catch((e) => alive && setError(String(e?.message ?? e)));
     return () => {
@@ -111,7 +159,7 @@ export function wikilinksToMd(text: string): string {
 export const mdRemarkPlugins = [remarkGfm, remarkMath, remarkCallouts] as any[];
 // rehype-raw first so callout title HTML becomes real nodes; KaTeX renders
 // $...$ and $$...$$ math before syntax highlighting handles code blocks.
-export const mdRehypePlugins = [rehypeRaw, rehypeKatex, rehypeHighlight] as any[];
+export const mdRehypePlugins = [rehypeRaw, lazyRehype("rehypeKatex"), lazyRehype("rehypeHighlight")] as any[];
 
 // Base components: render ```mermaid blocks as diagrams; keep highlight classes
 // on all other code.

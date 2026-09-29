@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { api } from "../api";
 import { Icon } from "../icons";
-import { LocalGraph } from "../LocalGraph";
-import { MarkdownEditor } from "../MarkdownEditor";
 import { NoteEmbed, unwrapEmbedParagraph } from "../NoteEmbed";
-import { RichMarkdownEditor } from "../RichMarkdownEditor";
+
+// Reading a note needs none of these; the editors and the graph load on first
+// use (and are warmed in the background once the notes page is open).
+const loadMarkdownEditor = () => import("../MarkdownEditor");
+const loadRichEditor = () => import("../RichMarkdownEditor");
+const MarkdownEditor = lazy(() => loadMarkdownEditor().then((m) => ({ default: m.MarkdownEditor })));
+const RichMarkdownEditor = lazy(() => loadRichEditor().then((m) => ({ default: m.RichMarkdownEditor })));
+const LocalGraph = lazy(() => import("../LocalGraph").then((m) => ({ default: m.LocalGraph })));
 import {
   mdComponents,
   mdRehypePlugins,
@@ -491,6 +496,13 @@ export function NotesPage({
     if (active) localStorage.setItem("ws.active", active);
     else localStorage.removeItem("ws.active");
   }, [active, detached]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadMarkdownEditor().catch(() => {});
+      void loadRichEditor().catch(() => {});
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, []);
   useEffect(
     () => localStorage.setItem("ws.expanded", JSON.stringify([...expanded])),
     [expanded],
@@ -1983,6 +1995,7 @@ export function NotesPage({
             </div>
           </div>
           {options.primary && viewMode === "source" ? (
+            <Suspense fallback={<div className="editor-loading muted small">Loading editor…</div>}>
             <MarkdownEditor
               value={draft}
               onChange={setDraft}
@@ -2000,7 +2013,9 @@ export function NotesPage({
               onExtractHeading={extractHeading}
               linkTargets={linkTargets}
             />
+            </Suspense>
           ) : options.primary && viewMode === "edit" ? (
+            <Suspense fallback={<div className="editor-loading muted small">Loading editor…</div>}>
             <RichMarkdownEditor
               value={draft}
               onChange={setDraft}
@@ -2009,6 +2024,7 @@ export function NotesPage({
               onOpenExternal={(url) => void openExternalUrl(url)}
               linkTargets={linkTargets}
             />
+            </Suspense>
           ) : (
             <>
               {activeInlineTranslation?.status === "loading" && (
@@ -3016,15 +3032,17 @@ export function NotesPage({
         </div>
       </div>
       {showLocalGraph && active && (
-        <LocalGraph
-          path={active}
-          title={stripExt(basename(active))}
-          onOpen={(p) => {
-            openInTab(p, true);
-            setShowLocalGraph(false);
-          }}
-          onClose={() => setShowLocalGraph(false)}
-        />
+        <Suspense fallback={null}>
+          <LocalGraph
+            path={active}
+            title={stripExt(basename(active))}
+            onOpen={(p) => {
+              openInTab(p, true);
+              setShowLocalGraph(false);
+            }}
+            onClose={() => setShowLocalGraph(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

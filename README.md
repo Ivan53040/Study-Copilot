@@ -207,6 +207,9 @@ a live backend status dot and the active chat model.
 - On every other page a **chat side panel** (speech-bubble button, top right)
   keeps the conversation next to your notes; *Open in full view* moves it to
   the main chat.
+- Pages other than chat load on first use, and heavy parts (Mermaid, KaTeX,
+  code highlighting, the note editors, the graph) load in the background or
+  when needed, so start-up only fetches about a fifth of the old bundle.
 - **Appearance** (Settings): Light, Dark or Match system, a serif or sans
   reading font, text size, and the name used in the greeting. The serif is
   Source Serif 4 (SIL Open Font License, bundled in `frontend/src/fonts/`).
