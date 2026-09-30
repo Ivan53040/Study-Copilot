@@ -105,6 +105,27 @@ fn port_file(project_dir: &Path) -> PathBuf {
     project_dir.join("data/desktop-port.txt")
 }
 
+// A one-line-per-event trail in <data dir>/app.log, so "the app opens but nothing works"
+// can be diagnosed on a machine we cannot see.
+#[cfg(not(debug_assertions))]
+fn breadcrumb(message: &str) {
+    use std::io::Write;
+    let Some(dir) = user_data_dir().map(|dir| dir.join("data")) else { return };
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(dir.join("app.log")) {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "[{secs}] {message}");
+    }
+}
+
+#[cfg(debug_assertions)]
+fn breadcrumb(_message: &str) {}
+
 // In a release build the app starts the backend itself (single launch).
 // In dev we rely on the manually-run backend, so we don't spawn a second one.
 //
@@ -166,7 +187,15 @@ fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
     } else {
         "study-copilot-backend"
     };
-    let exe = app.path().resource_dir().ok()?.join("backend").join(exe_name);
+    let resources = match app.path().resource_dir() {
+        Ok(dir) => dir,
+        Err(error) => {
+            breadcrumb(&format!("no resource dir: {error}"));
+            return None;
+        }
+    };
+    let exe = resources.join("backend").join(exe_name);
+    breadcrumb(&format!("backend exe {} (exists: {})", exe.display(), exe.is_file()));
     if !exe.is_file() {
         return None;
     }
@@ -198,7 +227,16 @@ fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
             cmd.stdout(Stdio::null()).stderr(Stdio::null());
         }
     }
-    cmd.spawn().ok()
+    match cmd.spawn() {
+        Ok(child) => {
+            breadcrumb(&format!("backend started (pid {}) on port {port}", child.id()));
+            Some(child)
+        }
+        Err(error) => {
+            breadcrumb(&format!("backend failed to start: {error}"));
+            None
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -236,6 +274,7 @@ fn backend_url(state: tauri::State<'_, BackendUrl>) -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let port = choose_port();
+    breadcrumb(&format!("app start, port {port}"));
     let builder = tauri::Builder::default();
     // Registered first: a second launch of the app hands over to this one
     // (its window comes to the front) and exits before starting a backend.
@@ -253,6 +292,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![backend_url])
         .setup(move |app| {
+            breadcrumb("setup reached");
             let child = spawn_backend(app.handle(), port);
             let url = child
                 .as_ref()

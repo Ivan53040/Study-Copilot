@@ -151,12 +151,35 @@ jobs:
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "Study Copilot" -srcfolder dmg-root -ov -format UDZO "${{ matrix.asset }}"
 
-      - name: Smoke-test the finished app (macOS)
+      - name: Smoke-test the backend inside the disk image (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # Open the app from the disk image, exactly as a user would, and check it
-          # starts its bundled backend.
+          # The exact files a user gets: mount the .dmg and run the backend that sits
+          # inside the .app (checks the signing and the copy into the bundle).
+          hdiutil attach "${{ matrix.asset }}" -mountpoint /tmp/sc-mount -nobrowse -quiet
+          export HOME="$RUNNER_TEMP/sc-dmg-home"
+          mkdir -p "$HOME"
+          "/tmp/sc-mount/Study Copilot.app/Contents/Resources/backend/study-copilot-backend" --port 8797 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 40); do
+            sleep 2
+            if curl -sf http://127.0.0.1:8797/health | grep -q '"status":"ok"'; then ok=1; break; fi
+          done
+          kill $pid 2>/dev/null || true
+          hdiutil detach /tmp/sc-mount -quiet || true
+          if [ "$ok" != "1" ]; then echo "The backend inside the app did not answer /health"; exit 1; fi
+          echo "bundled backend ok"
+
+      # Opening the whole GUI app needs a desktop session. It is a useful extra check
+      # when the runner has one, but it must not block the release, and it prints
+      # what the app wrote to its own log so problems are easy to diagnose.
+      - name: Launch the finished app (macOS, informational)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
           hdiutil attach "${{ matrix.asset }}" -mountpoint /tmp/sc-mount -nobrowse -quiet
           export HOME="$RUNNER_TEMP/sc-app-home"
           mkdir -p "$HOME"
@@ -168,14 +191,13 @@ jobs:
             sleep 2
             if curl -sf http://127.0.0.1:8798/health | grep -q '"status":"ok"'; then ok=1; break; fi
           done
+          echo "--- app output"; cat "$RUNNER_TEMP/app.log" || true
+          echo "--- app.log"; cat "$HOME/Library/Application Support/Study Copilot/data/app.log" || true
+          echo "--- backend.log"; cat "$HOME/Library/Application Support/Study Copilot/data/backend.log" || true
           kill $pid 2>/dev/null || true
           pkill -f study-copilot-backend || true
           hdiutil detach /tmp/sc-mount -quiet || true
-          if [ "$ok" != "1" ]; then
-            echo "The app did not start its backend"; cat "$RUNNER_TEMP/app.log" || true
-            cat "$HOME/Library/Application Support/Study Copilot/data/backend.log" || true
-            exit 1
-          fi
+          if [ "$ok" != "1" ]; then echo "The app did not start its backend"; exit 1; fi
           echo "app ok"
 
       - name: Checksum
