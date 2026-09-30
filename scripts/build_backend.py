@@ -49,7 +49,8 @@ def main() -> None:
     ]
     print(" ".join(cmd))
     subprocess.run(cmd, check=True, cwd=ROOT)
-    exe = DIST / "study-copilot-backend" / "study-copilot-backend.exe"
+    name = "study-copilot-backend.exe" if sys.platform == "win32" else "study-copilot-backend"
+    exe = DIST / "study-copilot-backend" / name
     size = sum(f.stat().st_size for f in exe.parent.rglob("*") if f.is_file()) / 1e6
     print(f"built {exe} ({size:.0f} MB in folder)")
 

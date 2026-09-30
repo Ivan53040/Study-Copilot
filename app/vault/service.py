@@ -15,6 +15,7 @@ import re
 import shutil
 import stat as stat_module
 import subprocess
+import sys
 import threading
 import json
 from datetime import datetime, timezone
@@ -865,12 +866,25 @@ def delete_note(relpath: str, settings: Settings | None = None) -> dict:
     return {"deleted": relpath, "backup": str(dest)}
 
 
+def _open_in_os(path: Path, *, reveal: bool = False) -> None:
+    """Open a file in its default app, or show it in Finder / Explorer / the file manager."""
+    if sys.platform == "win32":
+        if reveal:
+            # explorer often returns a non-zero exit even on success; don't check it.
+            subprocess.Popen(["explorer", f"/select,{path}"])
+        else:
+            os.startfile(str(path))  # noqa: S606 - desktop app, user-initiated
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)] if reveal else ["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path.parent if reveal else path)])
+
+
 def reveal_note(relpath: str, settings: Settings | None = None) -> dict:
-    """Open the OS file explorer with the note selected (Windows)."""
+    """Show the note in the OS file manager."""
     settings = settings or get_settings()
     p = assert_workspace_readable(_vault_root(settings) / relpath, settings)
-    # explorer often returns a non-zero exit even on success; don't check it.
-    subprocess.Popen(["explorer", f"/select,{p}"])
+    _open_in_os(p, reveal=True)
     return {"revealed": relpath}
 
 
@@ -885,7 +899,7 @@ def open_external(relpath: str, settings: Settings | None = None) -> dict:
     )
     if not p.exists():
         raise FileNotFoundError(f"Source not found: {relpath}")
-    os.startfile(str(p))  # noqa: S606 - Windows desktop app, user-initiated
+    _open_in_os(p)
     return {"opened": str(p)}
 
 

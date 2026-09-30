@@ -12,27 +12,52 @@ practise the concept, record confidence, and use that history to decide what to
 study next. Generated files are confined to a dedicated `StudyCopilot/` folder;
 original notes are never overwritten.
 
-## Download (Windows)
+## Download
 
-Grab **`Study-Copilot-<version>-setup.exe`** from the
-[latest release](https://github.com/Ivan53040/Study-Copilot/releases/latest) and run
-it. No Python, Node or admin rights needed (Windows 10/11, 64-bit).
+| Your computer | Download |
+| --- | --- |
+| **Windows** 10 / 11 (64-bit) | [**Study-Copilot-Windows-setup.exe**](https://github.com/Ivan53040/Study-Copilot/releases/latest/download/Study-Copilot-Windows-setup.exe) |
+| **Mac** with Apple silicon (M1, M2, M3, M4) | [**Study-Copilot-macOS-AppleSilicon.dmg**](https://github.com/Ivan53040/Study-Copilot/releases/latest/download/Study-Copilot-macOS-AppleSilicon.dmg) |
+| **Mac** with an Intel chip | [**Study-Copilot-macOS-Intel.dmg**](https://github.com/Ivan53040/Study-Copilot/releases/latest/download/Study-Copilot-macOS-Intel.dmg) |
 
-- The installer is **not code-signed**, so Windows SmartScreen may show "Windows
-  protected your PC". Choose **More info -> Run anyway**. A SHA-256 checksum is
-  attached to each release if you want to verify the download.
-- On first start the app creates a starter vault in `Documents\Study Copilot Vault`
-  and keeps its settings and database in `%APPDATA%\Study Copilot`. To use an
-  existing Obsidian vault, change **Settings -> Vault folder**.
-- **Chat needs a language model.** Install [LM Studio](https://lmstudio.ai), load a
-  model and start its local server (the default), or connect your Claude / ChatGPT
-  subscription or an API key in **Settings**. Nothing is sent anywhere unless you
-  choose a cloud model.
-- Semantic search starts in an offline mode (`embeddings.provider: hash`). For better
-  results load an embedding model such as `nomic-embed-text` in LM Studio and switch
-  Settings -> Embeddings to LM Studio.
-- Uninstall from Windows **Settings -> Apps**. Your notes and `%APPDATA%\Study Copilot`
-  are left in place.
+All versions are on the [Releases page](https://github.com/Ivan53040/Study-Copilot/releases),
+each with a SHA-256 checksum. No Python or Node needed.
+Not sure which Mac you have? Apple menu -> **About This Mac**: "Chip: Apple M..." means
+Apple silicon, "Processor: Intel" means Intel.
+
+**Windows.** Run the installer (no admin rights needed). The app is not code-signed, so
+Windows SmartScreen may show "Windows protected your PC": choose **More info -> Run
+anyway**.
+
+**Mac.** Open the `.dmg` and drag **Study Copilot** into **Applications**. The app is not
+signed with an Apple Developer ID, so macOS blocks the first launch ("Apple could not verify
+...").
+
+- macOS 14 and earlier: right-click (Control-click) the app -> **Open** -> **Open**.
+- macOS 15 and later: try to open it once, then go to **System Settings -> Privacy &
+  Security**, scroll down and click **Open Anyway**.
+- Or, in Terminal: `xattr -dr com.apple.quarantine "/Applications/Study Copilot.app"`
+
+You only need to do this once. The Mac build is newer than the Windows one and has had less
+testing, so please [open an issue](https://github.com/Ivan53040/Study-Copilot/issues) if
+something is off.
+
+**First start (both).** The app creates a starter vault (`Documents/Study Copilot Vault`)
+and keeps its settings and database in `%APPDATA%\Study Copilot` (Windows) or
+`~/Library/Application Support/Study Copilot` (Mac). To use an existing Obsidian vault, change
+**Settings -> Vault folder**.
+
+- **Chat needs a language model.** Install [LM Studio](https://lmstudio.ai), load a model and
+  start its local server (the default), or connect your Claude / ChatGPT subscription or an API
+  key in **Settings**. Nothing is sent anywhere unless you choose a cloud model.
+- Semantic search starts in an offline mode (`embeddings.provider: hash`). For better results
+  load an embedding model such as `nomic-embed-text` in LM Studio and switch Settings ->
+  Embeddings to LM Studio.
+- Not available on Mac yet: the built-in PowerPoint slide preview (it uses Microsoft PowerPoint
+  on Windows; use **Open** instead) and the iCloud sync helper (it relies on Windows' `robocopy`;
+  on a Mac the iCloud Drive folder syncs by itself, so just point Settings at it).
+- Uninstall: Windows **Settings -> Apps**; Mac drag the app to the Bin. Your notes and the settings
+  folder above are left in place.
 
 ## What makes it different
 
@@ -301,7 +326,7 @@ app, or the port it recorded in `data/desktop-port.txt`) as "app open" and
 wait. They check that the port really answers as Study Copilot, so another
 program on one of those ports no longer blocks syncing.
 
-### Desktop app (Tauri)
+### Desktop app (Tauri, Windows and macOS)
 
 The same UI + backend are wrapped as a native desktop app ([`frontend/src-tauri/`](frontend/src-tauri/)).
 The packaged app is **single-launch**: the Rust shell starts the Python backend
@@ -339,11 +364,19 @@ npm run tauri build   # release: builds src-tauri/target/release/app.exe
   a `.venv` next to it keeps the old behaviour (runs the project's Python and
   `config.yaml`); set `STUDY_COPILOT_MODE=bundled` to test the bundled backend from
   a checkout.
-- **Releases.** Pushing a tag like `v0.3.1` runs
-  [`.github/workflows/release.yml`](.github/workflows/release.yml): it freezes the
-  backend, smoke-tests it, builds the installer on a clean Windows runner and attaches
-  `Study-Copilot-<version>-setup.exe` and its checksum to the release. To build it
-  yourself, run `scriptsuild_desktop.cmd` (needs Node.js, Rust and Python).
+- **Releases.** Pushing a tag like `v0.3.2` runs
+  [`.github/workflows/release.yml`](.github/workflows/release.yml): on clean Windows and macOS
+  runners it freezes the backend, smoke-tests it, builds the app and attaches
+  `Study-Copilot-Windows-setup.exe`, `Study-Copilot-macOS-AppleSilicon.dmg` and
+  `Study-Copilot-macOS-Intel.dmg` (plus checksums) to the release. The file names carry no
+  version, so the links in [Download](#download) always point to the newest release.
+- **macOS build.** The `.app` is built by Tauri (`src-tauri/tauri.macos.conf.json`), the frozen
+  backend is copied into `Contents/Resources/backend`, the bundle is signed ad hoc (no Apple
+  Developer ID) and wrapped in a `.dmg`. To build it yourself on a Mac:
+  `python scripts/build_backend.py`, then `cd frontend && npm ci && npm run tauri build`, then copy
+  `build/backend/study-copilot-backend` into the `.app`'s `Contents/Resources/backend`.
+- To build the Windows installer yourself, run `scripts\build_desktop.cmd` (needs Node.js, Rust
+  and Python).
 
 Index embeddings for vector search (needs an embedding model loaded in LM
 Studio, e.g. `nomic-embed-text`; otherwise set `embeddings.provider: hash` in

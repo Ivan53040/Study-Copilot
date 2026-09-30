@@ -42,9 +42,45 @@ fn choose_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
+// The project's own Python (a developer checkout with a `.venv`).
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn venv_python(project_dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        project_dir.join(".venv/Scripts/pythonw.exe")
+    } else {
+        project_dir.join(".venv/bin/python")
+    }
+}
+
+// Where the packaged backend keeps its config and data. Must match
+// default_home() in scripts/desktop_backend.py.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn user_data_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("Study Copilot"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME").map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Study Copilot")
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+            .map(|base| base.join("Study Copilot"))
+    }
+}
+
 #[cfg_attr(debug_assertions, allow(dead_code))]
 fn is_project_dir(path: &Path) -> bool {
-    path.join(".venv/Scripts/pythonw.exe").is_file() && path.join("app/main.py").is_file()
+    venv_python(path).is_file() && path.join("app/main.py").is_file()
 }
 
 #[cfg_attr(debug_assertions, allow(dead_code))]
@@ -74,10 +110,11 @@ fn port_file(project_dir: &Path) -> PathBuf {
 //
 // Two ways to run it:
 //  * a developer checkout that still has `.venv` next to it (the old behaviour:
-//    `pythonw -m uvicorn` from the project, using the project's config.yaml), or
-//  * the frozen `study-copilot-backend.exe` shipped inside the installer
+//    `python -m uvicorn` from the project, using the project's config.yaml), or
+//  * the frozen `study-copilot-backend` shipped inside the installer
 //    (see scripts/build_backend.py). It keeps config and data in
-//    %APPDATA%\Study Copilot and needs no Python on the user's machine.
+//    %APPDATA%\Study Copilot (Windows) or ~/Library/Application Support/Study
+//    Copilot (macOS) and needs no Python on the user's machine.
 // STUDY_COPILOT_MODE=bundled forces the second even inside a checkout.
 #[cfg(not(debug_assertions))]
 fn spawn_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
@@ -94,7 +131,7 @@ fn spawn_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
 
 #[cfg(not(debug_assertions))]
 fn spawn_project_backend(project_dir: &Path, port: u16) -> Option<Child> {
-    let python = project_dir.join(".venv/Scripts/pythonw.exe");
+    let python = venv_python(project_dir);
     let port_arg = port.to_string();
     let mut cmd = Command::new(python);
     cmd.args([
@@ -124,15 +161,12 @@ fn spawn_project_backend(project_dir: &Path, port: u16) -> Option<Child> {
 
 #[cfg(not(debug_assertions))]
 fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    let exe = app
-        .path()
-        .resource_dir()
-        .ok()?
-        .join("backend")
-        .join("study-copilot-backend.exe");
+    let exe_name = if cfg!(windows) {
+        "study-copilot-backend.exe"
+    } else {
+        "study-copilot-backend"
+    };
+    let exe = app.path().resource_dir().ok()?.join("backend").join(exe_name);
     if !exe.is_file() {
         return None;
     }
@@ -140,12 +174,16 @@ fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
     let mut cmd = Command::new(&exe);
     cmd.args(["--port", port_arg.as_str()])
         .current_dir(exe.parent()?)
-        .stdin(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW);
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     // Keep a log next to the user's data so problems can be diagnosed.
-    let log_dir = std::env::var_os("APPDATA")
-        .map(|base| PathBuf::from(base).join("Study Copilot").join("data"));
+    let log_dir = user_data_dir().map(|dir| dir.join("data"));
     let log = log_dir.and_then(|dir| {
         fs::create_dir_all(&dir).ok()?;
         File::create(dir.join("backend.log")).ok()
@@ -175,7 +213,7 @@ fn spawn_backend(_app: &tauri::AppHandle, _port: u16) -> Option<Child> {
 fn spawn_sync_on_close() {
     let Some(project_dir) = project_dir() else { return };
     let _ = fs::remove_file(port_file(&project_dir));
-    let python = project_dir.join(".venv/Scripts/pythonw.exe");
+    let python = venv_python(&project_dir);
     let script = project_dir.join("scripts/sync_standalone.py");
     let _ = Command::new(python)
         .arg(script)

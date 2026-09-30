@@ -217,8 +217,10 @@ def test_open_external_search_source(settings, monkeypatch):
     paper = settings.external_sources[0].path / "exam.pdf"
     paper.write_bytes(b"pdf")
     opened: list[str] = []
-    # os.startfile only exists on Windows; add it for the test elsewhere (CI).
-    monkeypatch.setattr("app.vault.service.os.startfile", opened.append, raising=False)
+    # Don't launch a real program: record what would be opened.
+    monkeypatch.setattr(
+        "app.vault.service._open_in_os", lambda path, reveal=False: opened.append(str(path))
+    )
 
     result = open_external(str(paper), settings)
 

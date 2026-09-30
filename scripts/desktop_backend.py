@@ -8,7 +8,8 @@ as ``python -m app.main`` but keeps everything the user owns in one folder:
     <home>/.env            optional cloud API keys
     <home>/data/           database, voice-note audio
 
-``<home>`` is ``--home`` / ``STUDY_COPILOT_HOME``, else ``%APPDATA%/Study Copilot``.
+``<home>`` is ``--home`` / ``STUDY_COPILOT_HOME``, else ``%APPDATA%\\Study Copilot`` on
+Windows and ``~/Library/Application Support/Study Copilot`` on macOS.
 The notes vault defaults to ``Documents/Study Copilot Vault`` and can be changed
 in Settings.
 """
@@ -37,8 +38,14 @@ loaded, or connect Claude / ChatGPT in **Settings**.
 
 
 def default_home() -> Path:
-    base = os.environ.get("APPDATA") or str(Path.home() / ".config")
-    return Path(base) / "Study Copilot"
+    # Keep in step with user_data_dir() in frontend/src-tauri/src/lib.rs.
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "Study Copilot"
 
 
 def default_vault() -> Path:

@@ -1,27 +1,64 @@
 name: Release
 
-# Builds the Windows installer (Study-Copilot-<version>-setup.exe) and attaches it
-# to the GitHub release for the tag. Push a tag like v0.3.1, or run this workflow
-# by hand and give it an existing tag.
+# Builds the downloadable apps and attaches them to the GitHub release for a tag:
+#   Study-Copilot-Windows-setup.exe          Windows 10/11 (64-bit)
+#   Study-Copilot-macOS-AppleSilicon.dmg     Macs with an M1 / M2 / M3 / M4 chip
+#   Study-Copilot-macOS-Intel.dmg            Intel Macs
+# The names carry no version, so /releases/latest/download/<name> always works.
+#
+# Push a tag like v0.3.2, or run this workflow by hand with an existing tag.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach the installer to (e.g. v0.3.1)"
+        description: "Existing tag to build and attach the apps to (e.g. v0.3.2)"
         required: true
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
-  windows-installer:
-    name: Windows installer
-    runs-on: windows-latest
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the release if it does not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Study Copilot ${TAG#v}" --generate-notes
+          fi
+
+  build:
+    name: ${{ matrix.label }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    # A failing Intel build (or a runner image that is retired) must not block the rest.
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows
+            os: windows-latest
+            asset: Study-Copilot-Windows-setup.exe
+            optional: false
+          - label: macOS (Apple Silicon)
+            os: macos-latest
+            asset: Study-Copilot-macOS-AppleSilicon.dmg
+            optional: false
+          - label: macOS (Intel)
+            os: macos-15-intel
+            asset: Study-Copilot-macOS-Intel.dmg
+            optional: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,11 +75,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Freeze the backend (PyInstaller)
+        shell: bash
         run: |
           pip install -r requirements.txt pyinstaller
           python scripts/build_backend.py
 
-      - name: Smoke-test the frozen backend
+      - name: Smoke-test the frozen backend (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $home_dir = Join-Path $env:RUNNER_TEMP "sc-home"
@@ -63,31 +102,93 @@ jobs:
           if (-not $ok) { throw "The frozen backend did not answer /health" }
           "backend ok"
 
-      - name: Build the desktop app and installer (Tauri)
+      - name: Smoke-test the frozen backend (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export HOME="$RUNNER_TEMP/sc-home"
+          mkdir -p "$HOME"
+          build/backend/study-copilot-backend/study-copilot-backend --port 8799 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 40); do
+            sleep 2
+            if curl -sf http://127.0.0.1:8799/health | grep -q '"status":"ok"'; then ok=1; break; fi
+          done
+          kill $pid || true
+          if [ "$ok" != "1" ]; then echo "The frozen backend did not answer /health"; exit 1; fi
+          echo "backend ok"
+
+      - name: Build the app (Tauri)
         working-directory: frontend
+        shell: bash
         run: |
           npm ci
           npm run tauri build
 
-      - name: Name the installer and write a checksum
-        id: pack
+      # ---- Windows: the NSIS installer is already a single file --------------------
+      - name: Collect the installer (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $src = Get-ChildItem frontend/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          $version = $env:TAG.TrimStart("v")
-          $name = "Study-Copilot-$version-setup.exe"
-          Copy-Item $src.FullName $name
-          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name" | Out-File -Encoding ascii "$name.sha256"
-          "name=$name" >> $env:GITHUB_OUTPUT
+          Copy-Item $src.FullName "${{ matrix.asset }}"
+
+      # ---- macOS: add the backend to the .app, sign it ad hoc, wrap it in a .dmg ---
+      - name: Assemble the app and disk image (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP="frontend/src-tauri/target/release/bundle/macos/Study Copilot.app"
+          test -d "$APP"
+          # ditto keeps the symlinks and permissions PyInstaller produced.
+          ditto build/backend/study-copilot-backend "$APP/Contents/Resources/backend"
+          # No Apple Developer ID here: sign ad hoc so the app is a valid, sealed bundle.
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir dmg-root
+          ditto "$APP" "dmg-root/Study Copilot.app"
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "Study Copilot" -srcfolder dmg-root -ov -format UDZO "${{ matrix.asset }}"
+
+      - name: Smoke-test the finished app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Open the app from the disk image, exactly as a user would, and check it
+          # starts its bundled backend.
+          hdiutil attach "${{ matrix.asset }}" -mountpoint /tmp/sc-mount -nobrowse -quiet
+          export HOME="$RUNNER_TEMP/sc-app-home"
+          mkdir -p "$HOME"
+          STUDY_COPILOT_MODE=bundled STUDY_COPILOT_PORT=8798 \
+            "/tmp/sc-mount/Study Copilot.app/Contents/MacOS/app" > "$RUNNER_TEMP/app.log" 2>&1 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 45); do
+            sleep 2
+            if curl -sf http://127.0.0.1:8798/health | grep -q '"status":"ok"'; then ok=1; break; fi
+          done
+          kill $pid 2>/dev/null || true
+          pkill -f study-copilot-backend || true
+          hdiutil detach /tmp/sc-mount -quiet || true
+          if [ "$ok" != "1" ]; then
+            echo "The app did not start its backend"; cat "$RUNNER_TEMP/app.log" || true
+            cat "$HOME/Library/Application Support/Study Copilot/data/backend.log" || true
+            exit 1
+          fi
+          echo "app ok"
+
+      - name: Checksum
+        shell: bash
+        run: |
+          if command -v shasum >/dev/null 2>&1; then shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          else sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"; fi
+          cat "${{ matrix.asset }}.sha256"
 
       - name: Attach to the release
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view $env:TAG 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $env:TAG --title "Study Copilot $($env:TAG.TrimStart('v'))" --generate-notes
-          }
-          gh release upload $env:TAG "${{ steps.pack.outputs.name }}" "${{ steps.pack.outputs.name }}.sha256" --clobber
+          gh release upload "$TAG" "${{ matrix.asset }}" "${{ matrix.asset }}.sha256" \
+            --repo "$GITHUB_REPOSITORY" --clobber
