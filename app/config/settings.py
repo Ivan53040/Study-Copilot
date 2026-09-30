@@ -65,17 +65,44 @@ class AnthropicConfig(BaseModel):
     max_tokens: int = 4096
 
 
+class ClaudeCodeConfig(BaseModel):
+    """Claude through your Claude Pro/Max subscription, via the Claude Code CLI.
+
+    Sign in once by running ``claude`` in a terminal. ``model`` is a Claude
+    Code alias (sonnet, opus, haiku) or a full model name.
+    """
+
+    model: str = "sonnet"
+    command: str = "claude"  # or the full path to claude(.exe)
+    effort: str | None = None  # low | medium | high (blank = the model's default)
+
+
+class CodexConfig(BaseModel):
+    """ChatGPT through your ChatGPT plan, via the Codex CLI.
+
+    Sign in once with ``codex login``. A blank ``model`` uses Codex's default.
+    """
+
+    model: str = ""
+    command: str = "codex"  # or the full path to codex(.cmd)
+    effort: str | None = None  # model_reasoning_effort: low | medium | high
+
+
 class CloudFallbackConfig(BaseModel):
     enabled: bool = False
     require_approval: bool = True
 
 
 class ModelsConfig(BaseModel):
-    # "lmstudio" (local, default), "openai", "anthropic", or "echo" (offline test).
+    # "lmstudio" (local, default), "openai" / "anthropic" (API keys),
+    # "claude_code" / "codex" (your Claude or ChatGPT subscription through the
+    # vendor's CLI), or "echo" (offline test).
     default_provider: str = "lmstudio"
     lmstudio: LMStudioConfig = Field(default_factory=LMStudioConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
+    claude_code: ClaudeCodeConfig = Field(default_factory=ClaudeCodeConfig)
+    codex: CodexConfig = Field(default_factory=CodexConfig)
     cloud_fallback: CloudFallbackConfig = Field(default_factory=CloudFallbackConfig)
 
 

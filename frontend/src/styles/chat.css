@@ -148,7 +148,28 @@
   font-size: 10px;
   font-weight: 600;
 }
-.model-label { color: var(--muted); font-size: 12.5px; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+/* Model menu next to the send button (like the model picker on claude.ai). */
+.model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  max-width: 200px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.model-btn:hover:not(:disabled), .model-btn.open { background: var(--panel-2); color: var(--text-2); }
+.model-btn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-btn.unavailable .model-btn-label { color: var(--danger); }
+.model-btn svg { flex-shrink: 0; }
+.model-pop { width: min(320px, 86vw); max-height: min(460px, 70vh); overflow-y: auto; }
+.model-item .grow small { color: var(--muted); }
+.model-item .model-note { flex-shrink: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-item:disabled { opacity: 0.6; cursor: not-allowed; }
 .send-btn {
   width: 32px;
   height: 32px;
@@ -411,7 +432,7 @@
 .chat-view.compact .turn-assistant .md { font-size: calc(var(--base-font-size) + 1.5px); }
 .chat-view.compact .composer-dock { padding: 0 12px 12px; }
 .chat-view.compact .composer { border-radius: 16px; padding: 10px 10px 8px 12px; }
-.chat-view.compact .model-label { display: none; }
+.chat-view.compact .model-btn { max-width: 130px; }
 .chat-view.compact .tool-btn span.scope-name { max-width: 120px; }
 .note-chip span.scope-name, .chat-view.compact .note-chip span.scope-name { max-width: 220px; }
 .chat-view.compact .composer-pop { width: min(330px, calc(100vw - 40px)); }
@@ -433,7 +454,7 @@
 @media (max-width: 640px) {
   .thread-inner { padding: 16px 16px 24px; }
   .composer-dock { padding: 0 12px 12px; }
-  .model-label { display: none; }
+  .model-btn { max-width: 120px; }
 }
 
 /* ---- Citation lines (search / deep ask results) ---- */

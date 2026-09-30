@@ -116,6 +116,11 @@ function modelLabelFrom(settings: AppSettings | null, health: Health | null): st
   if (!provider) return undefined;
   if (override?.model) return override.model;
   if (provider === "echo") return "Offline echo";
+  if (provider === "claude_code") {
+    const alias = settings?.claude_code_model || "sonnet";
+    return /^[a-z]+$/.test(alias) ? `Claude ${alias[0].toUpperCase()}${alias.slice(1)}` : alias;
+  }
+  if (provider === "codex") return settings?.codex_model ? `ChatGPT · ${settings.codex_model}` : "ChatGPT";
   const model =
     provider === "openai"
       ? settings?.openai_model
@@ -837,7 +842,6 @@ export function App() {
                 conversationId={chatConvId}
                 initialInput={chatDraft}
                 userName={appearance.name}
-                modelLabel={modelLabel}
                 vaultRoot={vaultRoot}
                 onConversationCreated={(id) => setChatConvId(id)}
                 onActivity={refreshRecents}
@@ -953,7 +957,6 @@ export function App() {
                     key={`dock-${dockKey}`}
                     compact
                     conversationId={dockConvId}
-                    modelLabel={modelLabel}
                     vaultRoot={vaultRoot}
                     activeNote={dockNote}
                     onConversationCreated={(id) => setDockConvId(id)}

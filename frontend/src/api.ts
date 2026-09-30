@@ -5,6 +5,7 @@ import type {
   ChatRequestBody,
   ChatResponse,
   ChatStreamEvent,
+  ModelOptions,
   ConversationDetail,
   ConversationSummary,
   ConceptProgress,
@@ -226,6 +227,17 @@ export const api = {
   health: () => request<Health>("/health"),
 
   settings: () => request<AppSettings>("/settings"),
+
+  /** Models for the chat box, with Claude Code / Codex install + sign-in status. */
+  modelOptions: (refresh = false) =>
+    request<ModelOptions>(`/settings/models${refresh ? "?refresh=true" : ""}`),
+
+  /** One-word reply from a model: checks a subscription end to end. */
+  testModel: (provider: string, model?: string) =>
+    request<{ ok: boolean; reply: string; model: string; seconds: number }>("/settings/test-model", {
+      method: "POST",
+      body: JSON.stringify({ provider, model }),
+    }),
 
   saveSettings: (body: SettingsPayload) =>
     request<{ saved: boolean; settings: AppSettings }>("/settings", {

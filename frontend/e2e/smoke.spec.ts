@@ -205,3 +205,89 @@ test("appearance and quick open", async ({ page }) => {
   await search.press("Enter");
   await expect(page.locator(".note-page .md h1").first()).toContainText("Measurement");
 });
+
+test("model menu: answer with a Claude or ChatGPT subscription, remembered", async ({ page }) => {
+  await page.goto("/");
+  const modelButton = page.getByRole("button", { name: /^Model:/ });
+  await expect(modelButton).toContainText("e2e-model"); // the default: the local model
+  await modelButton.click();
+  const menu = page.getByRole("menu", { name: "Choose the model" });
+  await expect(menu.getByRole("group", { name: "Claude subscription" })).toBeVisible();
+  await expect(menu.getByRole("group", { name: "ChatGPT subscription" })).toBeVisible();
+  await menu.getByRole("menuitemradio", { name: /Claude Opus/ }).click();
+  await expect(modelButton).toContainText("Claude Opus");
+
+  await ask(page, "What is calibrated trust?");
+  await waitForAnswer(page);
+  await expect(lastAnswer(page).locator(".md")).toContainText("Claude opus says: Calibrated trust means");
+  await expect(lastAnswer(page).locator(".think-toggle")).toContainText("Thought for");
+  await expect(lastAnswer(page).locator(".cite-chip").first()).toBeVisible();
+
+  // ChatGPT next; the choice survives a reload.
+  await modelButton.click();
+  await menu.getByRole("menuitemradio", { name: /ChatGPT/ }).click();
+  await page.reload();
+  await expect(page.getByRole("button", { name: /^Model:/ })).toContainText("ChatGPT");
+  await ask(page, "What is reliability?");
+  await waitForAnswer(page);
+  await expect(lastAnswer(page).locator(".md")).toContainText("ChatGPT says:");
+
+  await page.getByRole("button", { name: /^Model:/ }).click();
+  await page.getByRole("menuitemradio", { name: /e2e-model/ }).click();
+  await expect(page.getByRole("button", { name: /^Model:/ })).toContainText("e2e-model");
+});
+
+test("Settings shows whether the subscriptions are ready", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTitle("Settings", { exact: true }).click();
+  const claude = page.getByLabel("Claude subscription");
+  await expect(claude).toContainText("Ready");
+  await expect(claude).toContainText("9.9.9 (e2e claude)");
+  await expect(page.getByLabel("ChatGPT subscription")).toContainText("Ready");
+  await claude.getByRole("button", { name: "Try it" }).click();
+  await expect(claude).toContainText("Replied");
+  const section = page.locator("section", { has: page.getByRole("heading", { name: "Language model" }) });
+  await section.getByLabel("Provider").selectOption("claude_code");
+  const modelField = section.locator("label.field").filter({ has: page.locator("span", { hasText: /^Model$/ }) });
+  await expect(modelField.locator("select")).toHaveValue("sonnet");
+});
+
+
+test("model menu: keyboard, and a clear message when the list can't be loaded", async ({ page }) => {
+  await page.goto("/");
+  const modelButton = page.getByRole("button", { name: /^Model:/ });
+  await modelButton.focus();
+  await modelButton.press("Enter");
+  const menu = page.getByRole("menu", { name: "Choose the model" });
+  // Opening puts the keyboard on the current model; arrows move between the ready ones.
+  await expect(menu.getByRole("menuitemradio", { name: /e2e-model/ })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitemradio", { name: /Claude Sonnet/ })).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(menu.getByRole("menuitem", { name: "Set up Claude or ChatGPT…" })).toBeFocused();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(modelButton).toContainText("Claude Sonnet");
+  await expect(modelButton).toBeFocused(); // the menu closes and the keyboard is back on the button
+  await modelButton.press("Enter");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(modelButton).toBeFocused();
+  await setModel(page, /e2e-model/);
+
+  // The model list can't be fetched (an older app build has no such page): say so, don't spin.
+  await page.route("**/settings/models*", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not found"}' }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: /^Model:/ }).click();
+  await expect(page.getByRole("menu", { name: "Choose the model" })).toContainText("Couldn’t check which models are ready");
+  // The browser logs the 404 itself; that one is expected here.
+  errors.set(page, (errors.get(page) ?? []).filter((m) => !m.includes("Failed to load resource")));
+});
+
+async function setModel(page: import("@playwright/test").Page, name: RegExp) {
+  await page.getByRole("button", { name: /^Model:/ }).click();
+  await page.getByRole("menuitemradio", { name }).click();
+}

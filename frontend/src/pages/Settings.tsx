@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppSettings, Job } from "../types";
+import type { AppSettings, CliStatus, Job } from "../types";
+import { loadModelOptions, useModelOptions } from "../models";
 import { Icon } from "../icons";
 import {
   type Appearance,
@@ -50,6 +51,137 @@ const TASK_MODEL_LABELS: Array<[keyof AppSettings["task_models"], string]> = [
   ["translation", "Translation"],
   ["voice_notes", "Voice notes"],
 ];
+
+const CLAUDE_CODE_MODELS: [string, string][] = [
+  ["sonnet", "Claude Sonnet"],
+  ["opus", "Claude Opus"],
+  ["haiku", "Claude Haiku"],
+];
+
+const SUBSCRIPTIONS: Record<
+  "claude_code" | "codex",
+  {
+    name: string;
+    plan: string;
+    tool: string;
+    install: string;
+    installWhere: string;
+    installAlt: string;
+    signIn: string;
+    signInHint: string;
+  }
+> = {
+  claude_code: {
+    name: "Claude",
+    plan: "Claude Pro or Max",
+    tool: "Claude Code",
+    install: "irm https://claude.ai/install.ps1 | iex",
+    installWhere: "in PowerShell",
+    installAlt: "npm install -g @anthropic-ai/claude-code",
+    signIn: "claude",
+    signInHint: "and sign in with your Claude account in the browser",
+  },
+  codex: {
+    name: "ChatGPT",
+    plan: "ChatGPT Plus or Pro",
+    tool: "Codex",
+    install: "npm install -g @openai/codex",
+    installWhere: "in a terminal",
+    installAlt: "",
+    signIn: "codex",
+    signInHint: "and choose “Sign in with ChatGPT”",
+  },
+};
+
+function SubscriptionCard({
+  kind,
+  status,
+  failed = false,
+}: {
+  kind: "claude_code" | "codex";
+  status: CliStatus | null;
+  failed?: boolean;
+}) {
+  const info = SUBSCRIPTIONS[kind];
+  const ready = Boolean(status?.installed && status.signed_in !== false);
+  const state = !status ? (failed ? "Unknown" : "Checking…") : !status.installed ? "Not installed" : status.signed_in === false ? "Not signed in" : "Ready";
+  const [trying, setTrying] = useState(false);
+  const [trial, setTrial] = useState<{ ok: boolean; text: string } | null>(null);
+  const tryIt = async () => {
+    setTrying(true);
+    setTrial(null);
+    try {
+      const result = await api.testModel(kind);
+      setTrial({ ok: true, text: `Replied “${result.reply || "…"}” in ${result.seconds} s.` });
+    } catch (e) {
+      setTrial({ ok: false, text: (e as Error).message });
+    } finally {
+      setTrying(false);
+    }
+  };
+  return (
+    <div className={`sub-card${ready ? " ready" : ""}`} aria-label={`${info.name} subscription`}>
+      <div className="sub-head">
+        <strong>{info.name}</strong>
+        <span className={`sub-state${ready ? " good" : ""}`}>{state}</span>
+      </div>
+      <div className="small muted">
+        Your {info.plan}, through {info.tool}
+        {status?.installed && status.version ? ` · ${status.version}` : ""}
+        {status?.account ? ` · ${status.account}` : ""}
+      </div>
+      {status && !ready && (
+        <ol className="sub-steps">
+          {!status.installed && (
+            <li>
+              Install {info.tool} ({info.installWhere}): <code>{info.install}</code>
+              {info.installAlt && <> or <code>{info.installAlt}</code></>}
+            </li>
+          )}
+          <li>
+            Sign in once: run <code>{info.signIn}</code> in a terminal {info.signInHint}.
+          </li>
+          <li>Come back and press <em>Check again</em>.</li>
+        </ol>
+      )}
+      {ready && (
+        <div className="sub-try">
+          <button type="button" onClick={tryIt} disabled={trying}>
+            {trying ? "Asking…" : "Try it"}
+          </button>
+          {trial && <span className={`small ${trial.ok ? "good-text" : "warn-text"}`}>{trial.text}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Claude / ChatGPT subscriptions: are the CLIs installed and signed in? */
+function Subscriptions() {
+  const { options, refreshing, refresh, failed } = useModelOptions();
+  return (
+    <div className="subscriptions">
+      <p className="small muted">
+        <strong>Subscriptions.</strong> Instead of an API key, Study Copilot can use your Claude
+        or ChatGPT plan by running the vendor’s own tool on this computer (Anthropic and OpenAI
+        don’t let other apps sign in to those accounts). Your account never passes through the
+        app, and usage counts toward your plan’s limits. For your own use only.
+      </p>
+      <div className="sub-grid">
+        <SubscriptionCard kind="claude_code" status={options?.status.claude_code ?? null} failed={failed} />
+        <SubscriptionCard kind="codex" status={options?.status.codex ?? null} failed={failed} />
+      </div>
+      {failed && !options && (
+        <p className="small warn-text">
+          Couldn’t reach the app to check. If you just updated it, restart it and check again.
+        </p>
+      )}
+      <button type="button" onClick={refresh} disabled={refreshing}>
+        {refreshing ? "Checking…" : "Check again"}
+      </button>
+    </div>
+  );
+}
 
 export function SettingsPage({
   onSaved,
@@ -159,6 +291,8 @@ export function SettingsPage({
         openai_base_url: settings.openai_base_url,
         openai_model: settings.openai_model,
         anthropic_model: settings.anthropic_model,
+        claude_code_model: settings.claude_code_model,
+        codex_model: settings.codex_model,
         api_key: apiKey.trim() || null,
         embedding_provider: settings.embedding_provider,
         embedding_base_url: settings.embedding_base_url,
@@ -173,6 +307,7 @@ export function SettingsPage({
       });
       setSettings(result.settings);
       setApiKey("");
+      void loadModelOptions(true).catch(() => undefined);
       setMessage("Settings saved. Indexing the whole vault…");
       const scan = await api.scanVault();
       setMessage(
@@ -277,7 +412,8 @@ export function SettingsPage({
         <div>
           <h2>Language model</h2>
           <p className="muted">
-            Run a local model with LM Studio, or use a cloud provider (OpenAI or Claude).
+            Run a local model with LM Studio, use your Claude or ChatGPT subscription, or an
+            API key. Pick the model for each chat in the chat box; this is the default.
             Cloud keys are stored in a local <code>.env</code> file, never in the synced config.
           </p>
         </div>
@@ -289,8 +425,10 @@ export function SettingsPage({
               onChange={(e) => setSettings({ ...settings, default_provider: e.target.value as AppSettings["default_provider"] })}
             >
               <option value="lmstudio">LM Studio (local)</option>
-              <option value="openai">OpenAI (GPT)</option>
-              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="claude_code">Claude — your subscription (Claude Code)</option>
+              <option value="codex">ChatGPT — your subscription (Codex)</option>
+              <option value="openai">OpenAI API key (GPT)</option>
+              <option value="anthropic">Anthropic API key (Claude)</option>
               <option value="echo">Offline echo (testing)</option>
             </select>
           </label>
@@ -306,6 +444,34 @@ export function SettingsPage({
                 <input value={settings.llm_base_url} onChange={(e) => setSettings({ ...settings, llm_base_url: e.target.value })} />
               </label>
             </>
+          )}
+
+          {settings.default_provider === "claude_code" && (
+            <label className="field">
+              <span>Model</span>
+              <select
+                value={settings.claude_code_model}
+                onChange={(e) => setSettings({ ...settings, claude_code_model: e.target.value })}
+              >
+                {!CLAUDE_CODE_MODELS.some(([alias]) => alias === settings.claude_code_model) && (
+                  <option value={settings.claude_code_model}>{settings.claude_code_model}</option>
+                )}
+                {CLAUDE_CODE_MODELS.map(([alias, label]) => (
+                  <option key={alias} value={alias}>{label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {settings.default_provider === "codex" && (
+            <label className="field">
+              <span>Model</span>
+              <input
+                value={settings.codex_model}
+                onChange={(e) => setSettings({ ...settings, codex_model: e.target.value })}
+                placeholder="Codex's default"
+              />
+            </label>
           )}
 
           {settings.default_provider === "openai" && (
@@ -374,6 +540,7 @@ export function SettingsPage({
             </button>
           )}
         </div>
+        <Subscriptions />
       </section>
 
       <section className="settings-section card">
@@ -399,6 +566,8 @@ export function SettingsPage({
                 >
                   <option value="">Default</option>
                   <option value="lmstudio">LM Studio</option>
+                  <option value="claude_code">Claude (subscription)</option>
+                  <option value="codex">ChatGPT (subscription)</option>
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="echo">Echo</option>

@@ -214,30 +214,38 @@ def _openai_chat_completion(
 class StreamCancel:
     """Ends model requests from another thread (the reader pressed Stop).
 
-    Each request's socket is shut down. That wakes a read that is waiting on
-    the model, even before the response headers arrive (a local model can
-    spend a while reading a long prompt), and tells the model server the
-    client left, so it can stop working on the reply.
+    HTTP requests have their socket shut down. That wakes a read that is
+    waiting on the model, even before the response headers arrive (a local
+    model can spend a while reading a long prompt), and tells the model server
+    the client left, so it can stop working on the reply. Other adapters
+    register their own way to stop (e.g. ending a CLI process) with ``add``.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._sockets: list[socket.socket] = []
+        self._stops: list = []
         self.cancelled = False
 
-    def watch(self, sock: socket.socket) -> None:
+    def add(self, stop) -> None:
+        """Call ``stop()`` on cancel (at once, if already cancelled)."""
         with self._lock:
             if not self.cancelled:
-                self._sockets.append(sock)
+                self._stops.append(stop)
                 return
-        _shutdown(sock)
+        stop()
+
+    def watch(self, sock: socket.socket) -> None:
+        self.add(lambda: _shutdown(sock))
 
     def cancel(self) -> None:
         with self._lock:
             self.cancelled = True
-            sockets, self._sockets = self._sockets, []
-        for sock in sockets:
-            _shutdown(sock)
+            stops, self._stops = self._stops, []
+        for stop in stops:
+            try:
+                stop()
+            except Exception:  # noqa: BLE001 - best effort
+                pass
 
     def trace(self, event_name: str, info: dict) -> None:
         """httpcore trace hook: watch each new connection's socket."""
@@ -693,22 +701,39 @@ def stream_reply(
     yield from splitter.flush()
 
 
+CHAT_PROVIDERS = ("lmstudio", "openai", "anthropic", "claude_code", "codex", "echo")
+
+
 def get_chat_adapter(
-    settings: Settings, task: str = "chat", timeout: float | None = None
+    settings: Settings,
+    task: str = "chat",
+    timeout: float | None = None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> ChatAdapter:
+    """The chat model for ``task``: ``provider`` / ``model`` if given (e.g. the
+    model picked in the chat box), else the task's override, else the
+    default provider."""
     override = getattr(settings.task_models, task, None)
-    provider = (
-        override.provider
-        if override is not None and override.provider
-        else settings.models.default_provider
-    )
+    if provider:
+        if provider not in CHAT_PROVIDERS:
+            raise ValueError(f"Unknown chat provider: {provider}")
+        override = None  # an explicit choice replaces the task override
+    else:
+        provider = (
+            override.provider
+            if override is not None and override.provider
+            else settings.models.default_provider
+        )
+    chosen = model or (override.model if override and override.model else None)
     if provider == "echo":
         return EchoChatAdapter()
     if provider == "openai":
         cfg = settings.models.openai
         return OpenAIChatAdapter(
             base_url=(override.base_url if override and override.base_url else cfg.base_url),
-            model=(override.model if override and override.model else cfg.model),
+            model=chosen or cfg.model,
             api_key=os.environ.get(cfg.api_key_env, ""),
             timeout=timeout or 120.0,
         )
@@ -716,13 +741,25 @@ def get_chat_adapter(
         cfg = settings.models.anthropic
         return AnthropicChatAdapter(
             api_key=os.environ.get(cfg.api_key_env, ""),
-            model=(override.model if override and override.model else cfg.model),
+            model=chosen or cfg.model,
             max_tokens=cfg.max_tokens,
             timeout=timeout or 120.0,
+        )
+    if provider in ("claude_code", "codex"):
+        from app.models.cli_models import ClaudeCodeAdapter, CodexAdapter
+
+        cli_cfg = settings.models.claude_code if provider == "claude_code" else settings.models.codex
+        adapter_cls = ClaudeCodeAdapter if provider == "claude_code" else CodexAdapter
+        return adapter_cls(
+            model=chosen if chosen is not None else cli_cfg.model,
+            command=cli_cfg.command,
+            # A CLI starts up and may think for a while before it writes.
+            timeout=max(timeout or 0.0, 300.0),
+            effort=cli_cfg.effort,
         )
     lm = settings.models.lmstudio
     return LMStudioChatAdapter(
         base_url=(override.base_url if override and override.base_url else lm.base_url),
-        model=(override.model if override and override.model else lm.model),
+        model=chosen or lm.model,
         timeout=timeout or 120.0,
     )

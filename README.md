@@ -111,6 +111,35 @@ cp config.example.yaml config.yaml
 
 On PowerShell, use `Copy-Item config.example.yaml config.yaml` instead.
 
+### Chat models: local, your Claude / ChatGPT subscription, or an API key
+
+Pick the model for each chat from the menu next to the send button; Settings →
+Language model sets the default (and per-task overrides).
+
+- **Local** — LM Studio / llama.cpp (`models.lmstudio`).
+- **Your Claude Pro/Max or ChatGPT Plus/Pro plan** — Anthropic and OpenAI don't
+  let other apps sign in to those accounts, so Study Copilot runs their own
+  command-line tools on this computer, which you sign in to once:
+
+  | | Install (PowerShell / terminal) | Sign in once |
+  | --- | --- | --- |
+  | Claude (Claude Code) | `irm https://claude.ai/install.ps1 \| iex` or `npm install -g @anthropic-ai/claude-code` | run `claude`, sign in with your Claude account |
+  | ChatGPT (Codex) | `npm install -g @openai/codex` | run `codex`, choose *Sign in with ChatGPT* |
+
+  Settings shows whether each is installed and signed in (**Check again**
+  after setting one up). The app never sees your account or its tokens; each
+  reply is one run of the tool (`claude -p` with every tool turned off, or
+  `codex exec` read-only in an empty scratch folder), and usage counts toward
+  your plan's limits. Replies take a few seconds longer to start than the API.
+  ChatGPT answers arrive in one piece rather than word by word, and page images
+  aren't sent (answers use the text). API keys in the environment are hidden
+  from these tools so they bill the plan, not an API account. This is for your
+  own use: if you share the app, each person signs in with their own account.
+  Config: `models.claude_code` (`model`: sonnet / opus / haiku, `command`,
+  `effort`) and `models.codex` (`model`, blank = Codex's default).
+- **API keys** — `openai` (or any OpenAI-compatible gateway) and `anthropic`;
+  keys go in the git-ignored `.env`, pay-as-you-go.
+
 ### Local vault + iCloud sync
 
 iCloud Drive on Windows is unreliable at syncing *newly created* notes (they get

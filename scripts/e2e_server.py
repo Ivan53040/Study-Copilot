@@ -183,10 +183,68 @@ def _mock_llm():
     return mock
 
 
+# Stand-ins for the Claude Code and Codex CLIs (a Claude / ChatGPT
+# subscription), signed in, answering like the scripted model does.
+_FAKE_CLI = r"""
+import json, os, re, sys
+TOOL = %(tool)r
+args = sys.argv[1:]
+if args[:1] == ["--version"]:
+    print("9.9.9 (e2e " + TOOL + ")"); sys.exit(0)
+if args[:2] in (["auth", "status"], ["login", "status"]):
+    print(json.dumps({"loggedIn": True, "subscriptionType": "max"}) if TOOL == "claude" else "Logged in using ChatGPT")
+    sys.exit(0)
+if args[:2] == ["exec", "--help"]:
+    print("--json --ephemeral --color"); sys.exit(0)
+prompt = sys.stdin.read()
+match = re.search(r"\[(S\d+)\][^\n]*\n(.+?)(?:\n\n\[S\d+\]|\Z)", prompt, re.S)
+marker, sentence = "S1", "Your notes cover this"
+if match:
+    for line in match.group(2).splitlines():
+        line = line.strip().lstrip("-*> ").strip()
+        if len(line.split()) >= 6 and not line.startswith(("#", "---")):
+            marker, sentence = match.group(1), re.split(r"(?<=[.!?])\s", line)[0].rstrip(".")
+            break
+if TOOL == "claude":
+    model = args[args.index("--model") + 1]
+    answer = f"Claude {model} says: {sentence} [{marker}]."
+    def out(obj): print(json.dumps(obj), flush=True)
+    out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "Reading the sources."}}})
+    for word in re.findall(r"\S+\s*", answer):
+        out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": word}}})
+    out({"type": "result", "subtype": "success", "is_error": False, "result": answer})
+else:
+    answer = f"ChatGPT says: {sentence} [{marker}]."
+    print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": answer}}), flush=True)
+    print(json.dumps({"type": "turn.completed", "usage": {}}), flush=True)
+"""
+
+
+def _install_fake_clis(tmp: Path) -> None:
+    """Put fake ``claude`` / ``codex`` first on PATH for this server."""
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir()
+    for tool in ("claude", "codex"):
+        script = bin_dir / f"{tool}.py"
+        script.write_text(_FAKE_CLI % {"tool": tool}, encoding="utf-8")
+        if sys.platform == "win32":
+            (bin_dir / f"{tool}.cmd").write_text(
+                f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8"
+            )
+        else:
+            launcher = bin_dir / tool
+            launcher.write_text(f"#!{sys.executable}\n" + script.read_text(encoding="utf-8"), encoding="utf-8")
+            launcher.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Study Copilot for the browser tests.")
     parser.add_argument("--port", type=int, default=8799)
     parser.add_argument("--web-dir", default=str(ROOT / "frontend" / "dist-web"))
+    parser.add_argument(
+        "--no-fake-clis", action="store_true", help="don't add the stand-in claude / codex CLIs"
+    )
     args = parser.parse_args()
 
     if not (Path(args.web_dir) / "index.html").is_file():
@@ -196,6 +254,8 @@ def main() -> None:
     os.environ["STUDY_COPILOT_CONFIG"] = str(_write_config(tmp, args.port))
     os.environ["STUDY_COPILOT_WEB_DIR"] = args.web_dir
     sys.path.insert(0, str(ROOT))
+    if not args.no_fake_clis:
+        _install_fake_clis(tmp)
 
     import uvicorn
     from starlette.routing import Mount

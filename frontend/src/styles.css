@@ -1422,3 +1422,21 @@ pre { background: var(--code-bg); padding: 12px; border-radius: 10px; overflow-x
 .palette-label b { font-weight: 550; font-size: 13px; color: var(--text); }
 .palette-label small { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) { .palette-cards { grid-template-columns: 1fr 1fr; } }
+
+/* Settings → Language model → Subscriptions */
+.subscriptions { grid-column: 1 / -1; display: grid; gap: 12px; padding-top: 18px; border-top: 1px solid var(--border); justify-items: start; }
+.subscriptions > p { max-width: 70ch; }
+.sub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; width: 100%; }
+.sub-card { display: grid; gap: 6px; align-content: start; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.sub-card.ready { border-color: color-mix(in srgb, var(--good, #3f8f5a) 40%, var(--border)); }
+.sub-head { display: flex; align-items: center; gap: 8px; }
+.sub-head strong { font-size: 14px; }
+.sub-state { margin-left: auto; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 12px; }
+.sub-state.good { background: color-mix(in srgb, var(--good, #3f8f5a) 14%, transparent); color: var(--good, #3f8f5a); }
+.sub-steps { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--text-2); }
+.sub-steps code { font-size: 11.5px; overflow-wrap: anywhere; }
+.sub-try { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
+.sub-try button { height: 30px; padding: 0 12px; }
+.sub-try .warn-text { color: var(--danger); overflow-wrap: anywhere; }
+.subscriptions > .warn-text { color: var(--danger); }
+

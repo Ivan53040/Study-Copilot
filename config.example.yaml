@@ -12,7 +12,8 @@ vault:
   - '**/.trash/**'
 external_sources: []
 models:
-  # Switch the chat model here: lmstudio (local, default) | openai | anthropic | echo.
+  # Switch the chat model here: lmstudio (local, default) | claude_code | codex |
+  # openai | anthropic | echo. (Any chat can also pick its model in the chat box.)
   # Cloud providers read their API key from the environment (see .env.example).
   default_provider: lmstudio
   lmstudio:
@@ -26,6 +27,13 @@ models:
   #   model: claude-opus-4-8
   #   api_key_env: ANTHROPIC_API_KEY
   #   max_tokens: 4096
+  # Your Claude / ChatGPT subscription, through the vendor's CLI (see README):
+  # claude_code:                         # default_provider: claude_code
+  #   model: sonnet                      # sonnet | opus | haiku | full model name
+  #   command: claude                    # or the full path to claude.exe
+  # codex:                               # default_provider: codex
+  #   model: ""                          # blank = Codex's default model
+  #   command: codex
   cloud_fallback:
     enabled: false
     require_approval: true

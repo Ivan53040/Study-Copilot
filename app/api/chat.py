@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, delete, func, select
 
 from app.agent.study_agent import ConversationEditError, answer, stream_answer
+from app.models.chat import get_chat_adapter
 from app.logging_config import get_logger
 from app.config.settings import Settings, get_settings
 from app.database.db import session_scope
@@ -38,9 +39,21 @@ class ChatRequest(BaseModel):
     note_path: str | None = None
     # Edit / regenerate: replace this saved question and everything after it.
     replace_from_id: int | None = None
+    # The model picked in the chat box (else the default from Settings).
+    provider: str | None = None
+    model: str | None = None
 
-    def agent_kwargs(self) -> dict:
+    def agent_kwargs(self, settings: Settings) -> dict:
+        adapter = None
+        if self.provider:
+            try:
+                adapter = get_chat_adapter(
+                    settings, "chat", provider=self.provider, model=self.model
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
+            "adapter": adapter,
             "course": self.course,
             "scope_path": self.scope_path,
             "study_set_id": self.study_set_id,
@@ -89,7 +102,7 @@ def _request_error(exc: Exception) -> HTTPException | None:
 @router.post("/chat")
 def post_chat(req: ChatRequest, settings: Settings = Depends(get_settings)) -> dict:
     try:
-        result = answer(req.message, settings=settings, **req.agent_kwargs())
+        result = answer(req.message, settings=settings, **req.agent_kwargs(settings))
     except Exception as exc:
         error = _request_error(exc)
         if error is None:
@@ -155,7 +168,7 @@ def post_chat_stream(
     Events: ``start`` → ``thinking`` / ``delta`` … → ``done`` (the saved answer,
     same shape as ``POST /chat``) or ``error``.
     """
-    events = stream_answer(req.message, settings=settings, **req.agent_kwargs())
+    events = stream_answer(req.message, settings=settings, **req.agent_kwargs(settings))
     return StreamingResponse(
         _ndjson(events),
         media_type="application/x-ndjson",

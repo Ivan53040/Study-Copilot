@@ -145,3 +145,22 @@ def test_save_preserves_config_comments(temp_config):
     rewritten = cfg.read_text(encoding="utf-8")
     assert "# KEEP THIS COMMENT" in rewritten  # comment survived the round-trip
     assert "local-2" in rewritten  # and the edit was applied
+
+
+def test_subscription_models_are_saved_and_must_be_plain_names(temp_config):
+    _, vault = temp_config
+    client = TestClient(app)
+    ok = client.put(
+        "/settings",
+        json=_payload(vault, default_provider="claude_code", claude_code_model="opus", codex_model="gpt-5.5"),
+    )
+    assert ok.status_code == 200, ok.text
+    saved = ok.json()["settings"]
+    assert saved["default_provider"] == "claude_code"
+    assert saved["claude_code_model"] == "opus" and saved["codex_model"] == "gpt-5.5"
+
+    # These become command-line arguments (through cmd.exe on Windows): names only.
+    for field, value in (("claude_code_model", "a&calc"), ("codex_model", "--dangerously-skip-permissions")):
+        refused = client.put("/settings", json=_payload(vault, **{field: value}))
+        assert refused.status_code == 422, (field, refused.text)
+    assert client.get("/settings").json()["claude_code_model"] == "opus"  # nothing was changed

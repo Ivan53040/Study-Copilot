@@ -12,6 +12,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { mdComponents, mdRehypePlugins, mdRemarkPlugins } from "../markdown";
 import { api } from "../api";
+import { ModelMenu, effectiveChoice, useModelChoice, useModelOptions } from "../models";
 import type {
   ChatRequestBody,
   ChatSource,
@@ -67,7 +68,6 @@ export interface ChatPageProps {
   /** Side-panel variant used next to notes and other tools. */
   compact?: boolean;
   userName?: string;
-  modelLabel?: string;
   vaultRoot?: string | null;
   onConversationCreated?: (id: number) => void;
   onActivity?: () => void;
@@ -346,7 +346,7 @@ function Composer({
   autoFocus,
   textareaRef,
   tools,
-  modelLabel,
+  model,
   onStop,
 }: {
   value: string;
@@ -357,7 +357,8 @@ function Composer({
   autoFocus?: boolean;
   textareaRef: RefObject<HTMLTextAreaElement>;
   tools: ReactNode;
-  modelLabel?: string;
+  /** The model menu, next to the send button. */
+  model?: ReactNode;
   /** While an answer streams, the send button becomes Stop. */
   onStop?: () => void;
 }) {
@@ -400,7 +401,7 @@ function Composer({
       <div className="composer-row">
         {tools}
         <div className="grow" />
-        {modelLabel && <span className="model-label" title="Chat model (change in Settings)">{modelLabel}</span>}
+        {model}
         {busy && onStop ? (
           <button
             type="button"
@@ -887,7 +888,6 @@ export function ChatPage({
   conversationId = null,
   compact = false,
   userName = "",
-  modelLabel,
   vaultRoot,
   onConversationCreated,
   onActivity,
@@ -898,6 +898,9 @@ export function ChatPage({
   initialInput = "",
   showToday = false,
 }: ChatPageProps) {
+  const modelChoice = useModelChoice();
+  const { options: modelList } = useModelOptions();
+  const modelMenu = <ModelMenu onSetup={onNavigate ? () => onNavigate("settings") : undefined} />;
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState(initialInput);
   const [scope, setScope] = useState<VaultScope | null>(null);
@@ -1079,6 +1082,11 @@ export function ChatPage({
           conversation_id: convIdRef.current,
         };
     if (replace?.messageId != null) body.replace_from_id = replace.messageId;
+    const chosenModel = effectiveChoice(modelList, modelChoice);
+    if (chosenModel) {
+      body.provider = chosenModel.provider;
+      body.model = chosenModel.model;
+    }
 
     const onEvent = (event: ChatStreamEvent) => {
       if (event.type === "start") {
@@ -1261,7 +1269,7 @@ export function ChatPage({
             textareaRef={textareaRef}
             placeholder="How can I help you study today?"
             tools={tools}
-            modelLabel={modelLabel}
+            model={modelMenu}
             onStop={stop}
           />
           <div className="suggestions">
@@ -1361,7 +1369,7 @@ export function ChatPage({
           textareaRef={textareaRef}
           placeholder={noteScope ? `Ask about ${noteScope.title}…` : compact ? "Ask about your notes…" : "Reply…"}
           tools={tools}
-          modelLabel={modelLabel}
+          model={modelMenu}
           onStop={stop}
         />
         {!compact && (

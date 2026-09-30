@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import io
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 from app.config.settings import get_settings, load_settings
 from app.database.db import reset_engine
+from app.models.chat import CHAT_PROVIDERS, ChatError, ChatMessage, get_chat_adapter
+from app.models.cli_models import CLAUDE_MODELS, check_model_name, cli_status
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -45,6 +49,16 @@ class SettingsUpdate(BaseModel):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
     anthropic_model: str = "claude-opus-4-8"
+    # Subscriptions through the vendors' CLIs (Claude Code / Codex).
+    claude_code_model: str = "sonnet"
+    codex_model: str = ""
+
+    @field_validator("claude_code_model", "codex_model")
+    @classmethod
+    def _cli_model_is_a_model_name(cls, value: str) -> str:
+        # These end up on a command line: names only (422 otherwise).
+        return check_model_name(value)
+
     # Cloud API key for the selected provider. Write-only: persisted to a
     # git-ignored .env, never echoed back. Blank = keep the existing key.
     api_key: str | None = None
@@ -111,6 +125,8 @@ def _public_settings() -> dict:
         "openai_base_url": models.openai.base_url,
         "openai_model": models.openai.model,
         "anthropic_model": models.anthropic.model,
+        "claude_code_model": models.claude_code.model,
+        "codex_model": models.codex.model,
         "openai_key_set": bool(os.environ.get(models.openai.api_key_env)),
         "anthropic_key_set": bool(os.environ.get(models.anthropic.api_key_env)),
         "embedding_provider": settings.embeddings.provider,
@@ -139,7 +155,7 @@ def update_settings(req: SettingsUpdate) -> dict:
         raise HTTPException(
             status_code=400, detail=f"Vault folder does not exist: {vault_root}"
         )
-    if req.default_provider not in {"lmstudio", "echo", "openai", "anthropic"}:
+    if req.default_provider not in set(CHAT_PROVIDERS):
         raise HTTPException(status_code=400, detail="Unsupported chat provider")
     if req.embedding_provider not in {"lmstudio", "hash"}:
         raise HTTPException(status_code=400, detail="Unsupported embedding provider")
@@ -171,6 +187,8 @@ def update_settings(req: SettingsUpdate) -> dict:
     openai["model"] = req.openai_model
     anthropic = models.setdefault("anthropic", {})
     anthropic["model"] = req.anthropic_model
+    models.setdefault("claude_code", {})["model"] = req.claude_code_model.strip() or "sonnet"
+    models.setdefault("codex", {})["model"] = req.codex_model.strip()
 
     # Cloud API key (if supplied) goes to the git-ignored .env, never config.yaml.
     if req.api_key and req.api_key.strip():
@@ -252,4 +270,132 @@ def test_llm(req: ConnectionTest) -> dict:
         "connected": True,
         "model_available": req.model in model_ids if model_ids else None,
         "models": model_ids,
+    }
+
+
+@router.get("/models")
+def model_options(refresh: bool = False) -> dict:
+    """The models the chat box can pick from, and whether each can run now.
+
+    Subscriptions (Claude Code / Codex) are checked by asking the installed
+    CLI for its version and sign-in status (cached for a minute; ``refresh``
+    checks again).
+    """
+    settings = get_settings()
+    models = settings.models
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claude_job = pool.submit(cli_status, "claude_code", models.claude_code.command, refresh=refresh)
+        codex_job = pool.submit(cli_status, "codex", models.codex.command, refresh=refresh)
+        claude, codex = claude_job.result(), codex_job.result()
+
+    def readiness(status: dict, sign_in: str) -> tuple[bool, str | None]:
+        if not status["installed"]:
+            return False, "Not installed"
+        if status["signed_in"] is False:
+            return False, f"Not signed in: run {sign_in}"
+        return True, None
+
+    options: list[dict] = [
+        {
+            "provider": "lmstudio",
+            "model": models.lmstudio.model,
+            "label": models.lmstudio.model,
+            "group": "Local",
+            "available": True,
+            "note": None,
+        }
+    ]
+    ok, note = readiness(claude, "`claude`")
+    claude_models = list(CLAUDE_MODELS)
+    if models.claude_code.model not in {alias for alias, _ in claude_models}:
+        claude_models.insert(0, (models.claude_code.model, models.claude_code.model))
+    for alias, label in claude_models:
+        options.append(
+            {
+                "provider": "claude_code",
+                "model": alias,
+                "label": label,
+                "group": "Claude subscription",
+                "available": ok,
+                "note": note,
+            }
+        )
+    ok, note = readiness(codex, "`codex login`")
+    options.append(
+        {
+            "provider": "codex",
+            "model": models.codex.model,
+            "label": f"ChatGPT · {models.codex.model}" if models.codex.model else "ChatGPT",
+            "group": "ChatGPT subscription",
+            "available": ok,
+            "note": note,
+        }
+    )
+    if os.environ.get(models.openai.api_key_env):
+        options.append(
+            {
+                "provider": "openai",
+                "model": models.openai.model,
+                "label": models.openai.model,
+                "group": "OpenAI API",
+                "available": True,
+                "note": None,
+            }
+        )
+    if os.environ.get(models.anthropic.api_key_env):
+        options.append(
+            {
+                "provider": "anthropic",
+                "model": models.anthropic.model,
+                "label": models.anthropic.model,
+                "group": "Claude API",
+                "available": True,
+                "note": None,
+            }
+        )
+    default_model = {
+        "lmstudio": models.lmstudio.model,
+        "openai": models.openai.model,
+        "anthropic": models.anthropic.model,
+        "claude_code": models.claude_code.model,
+        "codex": models.codex.model,
+    }.get(models.default_provider, "")
+    return {
+        "default": {"provider": models.default_provider, "model": default_model},
+        "options": options,
+        "status": {"claude_code": claude, "codex": codex},
+    }
+
+
+class ModelTest(BaseModel):
+    provider: str
+    model: str | None = None
+
+
+@router.post("/test-model")
+def test_model(req: ModelTest) -> dict:
+    """Ask a model for a one-word reply: checks a subscription end to end."""
+    if req.provider not in CHAT_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported chat provider")
+    settings = get_settings()
+    try:
+        adapter = get_chat_adapter(settings, "chat", timeout=120, provider=req.provider, model=req.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    started = time.monotonic()
+    try:
+        reply = adapter.generate(
+            [
+                ChatMessage("system", "Reply with exactly one word: Ready"),
+                ChatMessage("user", "Are you there?"),
+            ],
+            temperature=0,
+        )
+    except ChatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "reply": reply.content.strip()[:200],
+        "model": reply.model,
+        "seconds": round(time.monotonic() - started, 1),
     }

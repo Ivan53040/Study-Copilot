@@ -62,6 +62,9 @@ export interface ChatRequestBody {
   note_path?: string | null;
   /** Replace this saved question and everything after it (edit / regenerate). */
   replace_from_id?: number | null;
+  /** The model picked in the chat box (omit for the default from Settings). */
+  provider?: ChatProvider;
+  model?: string;
 }
 
 export type ChatStreamEvent =
@@ -555,7 +558,39 @@ export interface TaskModelOverride {
   base_url: string | null;
 }
 
-export type ChatProvider = "lmstudio" | "openai" | "anthropic" | "echo";
+export type ChatProvider = "lmstudio" | "openai" | "anthropic" | "claude_code" | "codex" | "echo";
+
+/** One model the chat box can pick (GET /settings/models). */
+export interface ModelOption {
+  provider: ChatProvider;
+  model: string;
+  label: string;
+  group: string;
+  available: boolean;
+  /** Why it can't be used right now ("Not installed", "Not signed in: …"). */
+  note: string | null;
+}
+
+/** Whether a subscription CLI (Claude Code / Codex) is ready on this computer. */
+export interface CliStatus {
+  installed: boolean;
+  path: string | null;
+  version: string | null;
+  /** null when the tool can't say. */
+  signed_in: boolean | null;
+  account: string | null;
+}
+
+export interface ModelChoice {
+  provider: ChatProvider;
+  model: string;
+}
+
+export interface ModelOptions {
+  default: ModelChoice;
+  options: ModelOption[];
+  status: { claude_code: CliStatus; codex: CliStatus };
+}
 
 export type TaskModelName =
   | "chat"
@@ -578,6 +613,8 @@ export interface AppSettings {
   openai_base_url: string;
   openai_model: string;
   anthropic_model: string;
+  claude_code_model: string;
+  codex_model: string;
   openai_key_set: boolean;
   anthropic_key_set: boolean;
   embedding_provider: "lmstudio" | "hash";
@@ -602,6 +639,8 @@ export interface SettingsPayload {
   openai_base_url: string;
   openai_model: string;
   anthropic_model: string;
+  claude_code_model: string;
+  codex_model: string;
   api_key?: string | null;
   embedding_provider: "lmstudio" | "hash";
   embedding_base_url: string | null;
