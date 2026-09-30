@@ -12,6 +12,28 @@ practise the concept, record confidence, and use that history to decide what to
 study next. Generated files are confined to a dedicated `StudyCopilot/` folder;
 original notes are never overwritten.
 
+## Download (Windows)
+
+Grab **`Study-Copilot-<version>-setup.exe`** from the
+[latest release](https://github.com/Ivan53040/Study-Copilot/releases/latest) and run
+it. No Python, Node or admin rights needed (Windows 10/11, 64-bit).
+
+- The installer is **not code-signed**, so Windows SmartScreen may show "Windows
+  protected your PC". Choose **More info -> Run anyway**. A SHA-256 checksum is
+  attached to each release if you want to verify the download.
+- On first start the app creates a starter vault in `Documents\Study Copilot Vault`
+  and keeps its settings and database in `%APPDATA%\Study Copilot`. To use an
+  existing Obsidian vault, change **Settings -> Vault folder**.
+- **Chat needs a language model.** Install [LM Studio](https://lmstudio.ai), load a
+  model and start its local server (the default), or connect your Claude / ChatGPT
+  subscription or an API key in **Settings**. Nothing is sent anywhere unless you
+  choose a cloud model.
+- Semantic search starts in an offline mode (`embeddings.provider: hash`). For better
+  results load an embedding model such as `nomic-embed-text` in LM Studio and switch
+  Settings -> Embeddings to LM Studio.
+- Uninstall from Windows **Settings -> Apps**. Your notes and `%APPDATA%\Study Copilot`
+  are left in place.
+
 ## What makes it different
 
 - **Local LLM by default** — works with LM Studio and other OpenAI-compatible
@@ -308,10 +330,20 @@ npm run tauri build   # release: builds src-tauri/target/release/app.exe
   other program that happens to hold a port (8765 is often a local model
   server). `VITE_API_BASE` in `frontend/.env.production` is only a fallback.
   The API client retries while the backend boots.
-- The backend path is currently baked for this machine (personal build). For a
-  portable installer, package the backend with PyInstaller
-  ([`scripts/desktop_backend.py`](scripts/desktop_backend.py)) and ship it as a
-  Tauri sidecar.
+- **Portable installer.** The backend is frozen with PyInstaller
+  ([`scripts/build_backend.py`](scripts/build_backend.py), entry point
+  [`scripts/desktop_backend.py`](scripts/desktop_backend.py)) into
+  `build/backend/study-copilot-backend/`, which Tauri ships inside the installer
+  (`bundle.resources`). On start the shell runs that exe with no console window;
+  it keeps config and data in `%APPDATA%\Study Copilot`. A checkout that still has
+  a `.venv` next to it keeps the old behaviour (runs the project's Python and
+  `config.yaml`); set `STUDY_COPILOT_MODE=bundled` to test the bundled backend from
+  a checkout.
+- **Releases.** Pushing a tag like `v0.3.1` runs
+  [`.github/workflows/release.yml`](.github/workflows/release.yml): it freezes the
+  backend, smoke-tests it, builds the installer on a clean Windows runner and attaches
+  `Study-Copilot-<version>-setup.exe` and its checksum to the release. To build it
+  yourself, run `scriptsuild_desktop.cmd` (needs Node.js, Rust and Python).
 
 Index embeddings for vector search (needs an embedding model loaded in LM
 Studio, e.g. `nomic-embed-text`; otherwise set `embeddings.provider: hash` in

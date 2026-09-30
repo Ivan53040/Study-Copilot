@@ -69,11 +69,31 @@ fn port_file(project_dir: &Path) -> PathBuf {
     project_dir.join("data/desktop-port.txt")
 }
 
-// In a release build the app starts the Python backend itself (single launch).
+// In a release build the app starts the backend itself (single launch).
 // In dev we rely on the manually-run backend, so we don't spawn a second one.
+//
+// Two ways to run it:
+//  * a developer checkout that still has `.venv` next to it (the old behaviour:
+//    `pythonw -m uvicorn` from the project, using the project's config.yaml), or
+//  * the frozen `study-copilot-backend.exe` shipped inside the installer
+//    (see scripts/build_backend.py). It keeps config and data in
+//    %APPDATA%\Study Copilot and needs no Python on the user's machine.
+// STUDY_COPILOT_MODE=bundled forces the second even inside a checkout.
 #[cfg(not(debug_assertions))]
-fn spawn_backend(port: u16) -> Option<Child> {
-    let project_dir = project_dir()?;
+fn spawn_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
+    let force_bundled = std::env::var("STUDY_COPILOT_MODE")
+        .map(|value| value.eq_ignore_ascii_case("bundled"))
+        .unwrap_or(false);
+    if !force_bundled {
+        if let Some(dir) = project_dir() {
+            return spawn_project_backend(&dir, port);
+        }
+    }
+    spawn_bundled_backend(app, port)
+}
+
+#[cfg(not(debug_assertions))]
+fn spawn_project_backend(project_dir: &Path, port: u16) -> Option<Child> {
     let python = project_dir.join(".venv/Scripts/pythonw.exe");
     let port_arg = port.to_string();
     let mut cmd = Command::new(python);
@@ -81,7 +101,7 @@ fn spawn_backend(port: u16) -> Option<Child> {
         "-m", "uvicorn", "app.main:app",
         "--host", "127.0.0.1", "--port", port_arg.as_str(), "--log-level", "warning",
     ])
-    .current_dir(&project_dir)
+    .current_dir(project_dir)
     .stdin(Stdio::null());
 
     // A detached GUI launch has no valid stdio; if the child inherits those
@@ -98,12 +118,53 @@ fn spawn_backend(port: u16) -> Option<Child> {
         }
     }
     let child = cmd.spawn().ok()?;
-    let _ = fs::write(port_file(&project_dir), &port_arg);
+    let _ = fs::write(port_file(project_dir), &port_arg);
     Some(child)
 }
 
+#[cfg(not(debug_assertions))]
+fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let exe = app
+        .path()
+        .resource_dir()
+        .ok()?
+        .join("backend")
+        .join("study-copilot-backend.exe");
+    if !exe.is_file() {
+        return None;
+    }
+    let port_arg = port.to_string();
+    let mut cmd = Command::new(&exe);
+    cmd.args(["--port", port_arg.as_str()])
+        .current_dir(exe.parent()?)
+        .stdin(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+
+    // Keep a log next to the user's data so problems can be diagnosed.
+    let log_dir = std::env::var_os("APPDATA")
+        .map(|base| PathBuf::from(base).join("Study Copilot").join("data"));
+    let log = log_dir.and_then(|dir| {
+        fs::create_dir_all(&dir).ok()?;
+        File::create(dir.join("backend.log")).ok()
+    });
+    match log {
+        Some(f) => {
+            let err = f.try_clone().ok();
+            cmd.stdout(Stdio::from(f));
+            cmd.stderr(err.map(Stdio::from).unwrap_or_else(Stdio::null));
+        }
+        None => {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
+    cmd.spawn().ok()
+}
+
 #[cfg(debug_assertions)]
-fn spawn_backend(_port: u16) -> Option<Child> {
+fn spawn_backend(_app: &tauri::AppHandle, _port: u16) -> Option<Child> {
     None
 }
 
@@ -154,7 +215,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![backend_url])
         .setup(move |app| {
-            let child = spawn_backend(port);
+            let child = spawn_backend(app.handle(), port);
             let url = child
                 .as_ref()
                 .map(|_| format!("http://127.0.0.1:{port}"));

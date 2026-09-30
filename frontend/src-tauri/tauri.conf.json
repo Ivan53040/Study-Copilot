@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Study Copilot",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "com.studycopilot.app",
   "build": {
     "frontendDist": "../dist",
@@ -29,6 +29,11 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "shortDescription": "Private, local-first AI study workspace",
+    "longDescription": "Study Copilot turns your notes, lecture slides and past papers into source-grounded answers, quizzes and study plans. It runs on a local language model by default.",
+    "resources": {
+      "../../build/backend/study-copilot-backend": "backend"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

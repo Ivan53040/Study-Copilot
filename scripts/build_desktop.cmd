@@ -13,6 +13,13 @@ if not exist node_modules (
   call npm install || goto :fail
 )
 
+echo Freezing the backend with PyInstaller...
+pushd "%~dp0.."
+if exist .venv\Scripts\python.exe (set "PY=.venv\Scripts\python.exe") else (set "PY=python")
+%PY% -m pip install --quiet pyinstaller || (popd & goto :fail)
+%PY% scripts\build_backend.py || (popd & goto :fail)
+popd
+
 echo Building the desktop app. The first build can take several minutes...
 call npm run tauri build || goto :fail
 
