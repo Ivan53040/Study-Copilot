@@ -180,6 +180,37 @@ fn spawn_project_backend(project_dir: &Path, port: u16) -> Option<Child> {
     Some(child)
 }
 
+// Finds the frozen backend that ships inside the installer. Tauri's own
+// resource_dir() is tried first; it fails on macOS in some layouts without saying why,
+// so the folders it would point at are also derived from the running executable:
+//   Windows: <install dir>/backend/        macOS: <App>.app/Contents/Resources/backend/
+#[cfg(not(debug_assertions))]
+fn find_bundled_backend(app: &tauri::AppHandle, exe_name: &str) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    match app.path().resource_dir() {
+        Ok(dir) => candidates.push(dir.join("backend").join(exe_name)),
+        Err(error) => breadcrumb(&format!("resource_dir() failed: {error}")),
+    }
+    match std::env::current_exe() {
+        Ok(exe) => {
+            breadcrumb(&format!("running from {}", exe.display()));
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("../Resources/backend").join(exe_name));
+                candidates.push(dir.join("backend").join(exe_name));
+            }
+        }
+        Err(error) => breadcrumb(&format!("current_exe() failed: {error}")),
+    }
+    for candidate in &candidates {
+        let found = candidate.is_file();
+        breadcrumb(&format!("backend candidate {} (exists: {found})", candidate.display()));
+        if found {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
 #[cfg(not(debug_assertions))]
 fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
     let exe_name = if cfg!(windows) {
@@ -187,18 +218,7 @@ fn spawn_bundled_backend(app: &tauri::AppHandle, port: u16) -> Option<Child> {
     } else {
         "study-copilot-backend"
     };
-    let resources = match app.path().resource_dir() {
-        Ok(dir) => dir,
-        Err(error) => {
-            breadcrumb(&format!("no resource dir: {error}"));
-            return None;
-        }
-    };
-    let exe = resources.join("backend").join(exe_name);
-    breadcrumb(&format!("backend exe {} (exists: {})", exe.display(), exe.is_file()));
-    if !exe.is_file() {
-        return None;
-    }
+    let exe = find_bundled_backend(app, exe_name)?;
     let port_arg = port.to_string();
     let mut cmd = Command::new(&exe);
     cmd.args(["--port", port_arg.as_str()])
