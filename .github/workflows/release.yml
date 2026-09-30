@@ -172,12 +172,10 @@ jobs:
           if [ "$ok" != "1" ]; then echo "The backend inside the app did not answer /health"; exit 1; fi
           echo "bundled backend ok"
 
-      # Opening the whole GUI app needs a desktop session. It is a useful extra check
-      # when the runner has one, but it must not block the release, and it prints
-      # what the app wrote to its own log so problems are easy to diagnose.
-      - name: Launch the finished app (macOS, informational)
+      # Open the finished app from the disk image, as a user would, and check that it
+      # starts its bundled backend. It also prints what the app wrote to its own log.
+      - name: Launch the finished app (macOS)
         if: runner.os == 'macOS'
-        continue-on-error: true
         shell: bash
         run: |
           hdiutil attach "${{ matrix.asset }}" -mountpoint /tmp/sc-mount -nobrowse -quiet
